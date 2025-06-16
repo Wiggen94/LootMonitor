@@ -1,0 +1,8 @@
+## Interface: 11200
+## Title: Loot Monitor
+## Notes: Shows fading notifications with recent loot and their icons for Turtle WoW
+## Author: Croome
+## Version: 1.0
+## SavedVariables: LootMonitorDB
+
+LootMonitor.lua 
