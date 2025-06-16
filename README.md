@@ -115,7 +115,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📞 Support
 
 - **GitHub Issues**: [Report bugs or request features](https://github.com/Wiggen94/lootmonitor/issues)
-- **Turtle WoW Forums**: Post in the AddOns section
+- **Turtle WoW Forums**: [Post in the forum post](https://forum.turtle-wow.org/viewtopic.php?t=19918)
 - **Discord**: Find me on the Turtle WoW Discord
 
 ---
