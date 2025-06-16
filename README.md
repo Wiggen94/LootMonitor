@@ -2,7 +2,7 @@
 
 A sleek and customizable loot notification addon for Turtle WoW that displays fading notifications with real item icons when you loot items or coins.
 
-![LootMonitor Demo](image.png)
+![LootMonitor Demo](https://github.com/Wiggen94/lootmonitor/blob/main/images/image.png?raw=true)
 
 ![LootMonitor Demo](https://img.shields.io/badge/WoW-1.12.1-blue) ![Turtle WoW](https://img.shields.io/badge/Turtle%20WoW-Compatible-green) ![License](https://img.shields.io/badge/License-MIT-yellow)
 
