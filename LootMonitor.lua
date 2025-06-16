@@ -65,6 +65,7 @@ function LootMonitor:RegisterEvents()
     local frame = CreateFrame("Frame")
     frame:RegisterEvent("CHAT_MSG_LOOT")
     frame:RegisterEvent("CHAT_MSG_MONEY")
+    frame:RegisterEvent("CHAT_MSG_SYSTEM")
     frame:RegisterEvent("ADDON_LOADED")
     frame:SetScript("OnEvent", function()
         if event == "ADDON_LOADED" and arg1 == "LootMonitor" then
@@ -73,6 +74,8 @@ function LootMonitor:RegisterEvents()
             LootMonitor:ProcessLootMessage(arg1)
         elseif event == "CHAT_MSG_MONEY" then
             LootMonitor:ProcessMoneyMessage(arg1)
+        elseif event == "CHAT_MSG_SYSTEM" then
+            LootMonitor:ProcessSystemMessage(arg1)
         end
     end)
 end
@@ -220,6 +223,56 @@ function LootMonitor:ProcessMoneyMessage(message)
         if coinAmount > 0 then
             local coinText = coinAmount .. " " .. coinType
             self:AddLootItem(coinText, true, 1)
+        end
+    end
+end
+
+-- Process system messages for quest rewards and other item gains
+function LootMonitor:ProcessSystemMessage(message)
+    if not message then return end
+    
+    -- Debug: Print system messages that might contain item information
+    if LootMonitor.debugMode and (string.find(message, "Received item") or 
+       string.find(message, "You receive") or 
+       string.find(message, "receive") or
+       string.find(message, "%[")) then
+        print("[LootMonitor Debug] System message: " .. message)
+    end
+    
+    -- Check for various quest reward patterns
+    if string.find(message, "Received item") or 
+       string.find(message, "You receive") or
+       string.find(message, "receive") then
+        
+        -- Look for full item links (|cXXXXXXXX|Hitem:...|h[Name]|h|r)
+        local linkStart = string.find(message, "|c")
+        if linkStart then
+            local hStart = string.find(message, "|H", linkStart)
+            if hStart then
+                local linkEnd = string.find(message, "|r", hStart)
+                if linkEnd then
+                    local itemLink = string.sub(message, linkStart, linkEnd + 1)
+                    -- Validate that it's a proper item link with |Hitem:
+                    if string.find(itemLink, "|Hitem:") then
+                        -- Extract quantity after the link
+                        local quantity = self:ExtractQuantityFromMessage(message, linkEnd + 2)
+                        self:AddLootItem(itemLink, false, quantity)
+                        return
+                    end
+                end
+            end
+        end
+        
+        -- Extract item name in brackets
+        local bracketStart = string.find(message, "%[")
+        if bracketStart then
+            local bracketEnd = string.find(message, "%]", bracketStart)
+            if bracketEnd then
+                local itemName = string.sub(message, bracketStart + 1, bracketEnd - 1)
+                -- Extract quantity after the brackets
+                local quantity = self:ExtractQuantityFromMessage(message, bracketEnd + 1)
+                self:AddLootItem(itemName, true, quantity)
+            end
         end
     end
 end
@@ -885,6 +938,14 @@ SlashCmdList["LOOTMONITOR"] = function(msg)
         LootMonitor:ToggleMoveMode()
     elseif cmd == "settings" or cmd == "config" then
         LootMonitor:ShowSettings()
+    elseif cmd == "debug" then
+        if LootMonitor.debugMode then
+            LootMonitor.debugMode = false
+            print("[Loot Monitor] Debug mode disabled.")
+        else
+            LootMonitor.debugMode = true
+            print("[Loot Monitor] Debug mode enabled. All system messages with items will be printed.")
+        end
     elseif cmd == "help" then
         print("[Loot Monitor] Commands:")
         print("  /lootmonitor or /lm - Open settings panel")
@@ -893,6 +954,7 @@ SlashCmdList["LOOTMONITOR"] = function(msg)
         print("  /lootmonitor test - Create test notification")
         print("  /lootmonitor move - Toggle move mode to reposition notifications")
         print("  /lootmonitor settings - Open settings panel")
+        print("  /lootmonitor debug - Toggle debug mode to see system messages")
         print("  /lootmonitor help - Show this help")
     else
         print("[Loot Monitor] Unknown command. Use '/lootmonitor help' for help.")
