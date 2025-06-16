@@ -122,8 +122,8 @@ function LootMonitor:ProcessLootMessage(message)
         return
     end
     
-    -- Check if this is a "You receive loot:" message
-    if string.find(message, "You receive loot:") then
+    -- Check if this is a "You receive loot:" or "Received item" message
+    if string.find(message, "You receive loot:") or string.find(message, "Received item") then
         -- Look for full item links (|cXXXXXXXX|Hitem:...|h[Name]|h|r)
         local linkStart = string.find(message, "|c")
         if linkStart then
