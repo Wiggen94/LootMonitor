@@ -266,24 +266,26 @@ end
 function LootMonitor:ProcessLootMessage(message)
     if not message then return end
     
+
+    
     -- Check for coin loot messages first (e.g., "You loot 2 Copper")
-    if string.find(message, "You loot") and (string.find(message, "Copper") or string.find(message, "Silver") or string.find(message, "Gold")) then
+    if strfind(message, "You loot") and (strfind(message, "Copper") or strfind(message, "Silver") or strfind(message, "Gold")) then
         self:ProcessCoinLoot(message)
         return
     end
     
-    -- Check if this is a "You receive loot:" or "Received item" message
-    if string.find(message, "You receive loot:") or string.find(message, "Received item") then
+    -- Check if this is a "You receive loot:", "You receive item:", or "Received item" message
+    if strfind(message, "You receive loot:") or strfind(message, "You receive item:") or strfind(message, "Received item") then
         -- Look for full item links (|cXXXXXXXX|Hitem:...|h[Name]|h|r)
-        local linkStart = string.find(message, "|c")
+        local linkStart = strfind(message, "|c")
         if linkStart then
-            local hStart = string.find(message, "|H", linkStart)
+            local hStart = strfind(message, "|H", linkStart)
             if hStart then
-                local linkEnd = string.find(message, "|r", hStart)
+                local linkEnd = strfind(message, "|r", hStart)
                 if linkEnd then
-                    local itemLink = string.sub(message, linkStart, linkEnd + 1)
+                    local itemLink = strsub(message, linkStart, linkEnd + 1)
                     -- Validate that it's a proper item link with |Hitem:
-                    if string.find(itemLink, "|Hitem:") then
+                    if strfind(itemLink, "|Hitem:") then
                         -- Extract quantity after the link
                         local quantity = self:ExtractQuantityFromMessage(message, linkEnd + 2)
                         self:AddLootItem(itemLink, false, quantity)
@@ -294,11 +296,11 @@ function LootMonitor:ProcessLootMessage(message)
         end
         
         -- Extract item name in brackets (this is what we're actually getting)
-        local bracketStart = string.find(message, "%[")
+        local bracketStart = strfind(message, "%[")
         if bracketStart then
-            local bracketEnd = string.find(message, "%]", bracketStart)
+            local bracketEnd = strfind(message, "%]", bracketStart)
             if bracketEnd then
-                local itemName = string.sub(message, bracketStart + 1, bracketEnd - 1)
+                local itemName = strsub(message, bracketStart + 1, bracketEnd - 1)
                 -- Extract quantity after the brackets
                 local quantity = self:ExtractQuantityFromMessage(message, bracketEnd + 1)
                 self:AddLootItem(itemName, true, quantity) -- true indicates it's just a name, not a full link
@@ -378,29 +380,30 @@ end
 function LootMonitor:ProcessSystemMessage(message)
     if not message then return end
     
+
+    
     -- Debug: Print system messages that might contain item information
-    if LootMonitor.debugMode and (string.find(message, "Received item") or 
-       string.find(message, "You receive") or 
-       string.find(message, "receive") or
-       string.find(message, "%[")) then
+    if LootMonitor.debugMode and (
+       strfind(message, "You receive") or 
+       strfind(message, "%[")) then
         Print("[LootMonitor Debug] System message: " .. message)
     end
     
     -- Check for various quest reward patterns
-    if string.find(message, "Received item") or 
-       string.find(message, "You receive") or
-       string.find(message, "receive") then
+    if strfind(message, "You receive item:") or
+       strfind(message, "You receive") or
+       strfind(message, "receive") then
         
         -- Look for full item links (|cXXXXXXXX|Hitem:...|h[Name]|h|r)
-        local linkStart = string.find(message, "|c")
+        local linkStart = strfind(message, "|c")
         if linkStart then
-            local hStart = string.find(message, "|H", linkStart)
+            local hStart = strfind(message, "|H", linkStart)
             if hStart then
-                local linkEnd = string.find(message, "|r", hStart)
+                local linkEnd = strfind(message, "|r", hStart)
                 if linkEnd then
-                    local itemLink = string.sub(message, linkStart, linkEnd + 1)
+                    local itemLink = strsub(message, linkStart, linkEnd + 1)
                     -- Validate that it's a proper item link with |Hitem:
-                    if string.find(itemLink, "|Hitem:") then
+                    if strfind(itemLink, "|Hitem:") then
                         -- Extract quantity after the link
                         local quantity = self:ExtractQuantityFromMessage(message, linkEnd + 2)
                         self:AddLootItem(itemLink, false, quantity)
@@ -411,11 +414,11 @@ function LootMonitor:ProcessSystemMessage(message)
         end
         
         -- Extract item name in brackets
-        local bracketStart = string.find(message, "%[")
+        local bracketStart = strfind(message, "%[")
         if bracketStart then
-            local bracketEnd = string.find(message, "%]", bracketStart)
+            local bracketEnd = strfind(message, "%]", bracketStart)
             if bracketEnd then
-                local itemName = string.sub(message, bracketStart + 1, bracketEnd - 1)
+                local itemName = strsub(message, bracketStart + 1, bracketEnd - 1)
                 -- Extract quantity after the brackets
                 local quantity = self:ExtractQuantityFromMessage(message, bracketEnd + 1)
                 self:AddLootItem(itemName, true, quantity)
@@ -673,27 +676,52 @@ end
 
 
 
--- Schedule asynchronous icon search
+-- Schedule asynchronous icon search with retry mechanism
 function LootMonitor:ScheduleIconSearch(notification)
     local searchFrame = CreateFrame("Frame")
-    local startTime = GetTime()
-    local searchDelay = 0.1
+    local startTime = gettime()
+    local maxSearchTime = 3.0 -- Search for up to 3 seconds
+    local searchInterval = 0.2 -- Check every 0.2 seconds
+    local lastSearch = 0
+    local fallbackUsed = false
     
     searchFrame:SetScript("OnUpdate", function()
-        if GetTime() - startTime >= searchDelay then
-            searchFrame:SetScript("OnUpdate", nil)
-            
-            -- Search for item texture
-            local texture = LootMonitor:FindItemTextureInBags(notification.name)
-            
-            if texture then
-                notification.icon:SetTexture(texture)
-            else
-                -- Try some common fallback icons based on item name
+        local elapsed = gettime() - startTime
+        local timeSinceLastSearch = gettime() - lastSearch
+        
+        -- Stop searching after max time
+        if elapsed > maxSearchTime then
+            -- Use fallback icon if we haven't found anything
+            if not fallbackUsed then
                 local fallbackTexture = LootMonitor:GetFallbackIcon(notification.name)
                 if fallbackTexture then
                     notification.icon:SetTexture(fallbackTexture)
                 end
+            end
+            searchFrame:SetScript("OnUpdate", nil)
+            return
+        end
+        
+        -- Only search at intervals
+        if timeSinceLastSearch < searchInterval then
+            return
+        end
+        
+        lastSearch = gettime()
+        
+        -- Search for item texture
+        local texture = LootMonitor:FindItemTextureInBags(notification.name)
+        
+        if texture then
+            notification.icon:SetTexture(texture)
+            searchFrame:SetScript("OnUpdate", nil) -- Stop searching once found
+        elseif not fallbackUsed and elapsed > 0.5 then
+            -- Use fallback icon after 0.5 seconds if still no real icon found
+            local fallbackTexture = LootMonitor:GetFallbackIcon(notification.name)
+            if fallbackTexture then
+                notification.icon:SetTexture(fallbackTexture)
+                fallbackUsed = true
+                -- Continue searching for real icon in case it appears later
             end
         end
     end)
