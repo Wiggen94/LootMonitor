@@ -124,6 +124,36 @@ function LootMonitor:ScheduleQuestItemCheck(notification)
     end)
 end
 
+-- Schedule a delayed total count update (item needs time to appear in bags)
+function LootMonitor:ScheduleTotalCountUpdate(notification)
+    local updateFrame = CreateFrame("Frame")
+    local startTime = gettime()
+    local maxUpdateTime = 1.5 -- Check for up to 1.5 seconds
+    local updateInterval = 0.3 -- Update every 0.3 seconds
+    local lastUpdate = 0
+    
+    updateFrame:SetScript("OnUpdate", function()
+        local elapsed = gettime() - startTime
+        local timeSinceLastUpdate = gettime() - lastUpdate
+        
+        -- Stop checking after max time
+        if elapsed > maxUpdateTime then
+            updateFrame:SetScript("OnUpdate", nil)
+            return
+        end
+        
+        -- Only update at intervals
+        if timeSinceLastUpdate < updateInterval then
+            return
+        end
+        
+        lastUpdate = gettime()
+        
+        -- Update the total count display
+        LootMonitor:UpdateNotificationText(notification)
+    end)
+end
+
 -- Default settings
 local defaults = {
     enabled = true,
@@ -132,6 +162,7 @@ local defaults = {
     displayTime = 5.0,
     fadeOutTime = 1.0,
     questItemGlow = true,
+    showTotalCount = true,
     position = {
         point = "CENTER",
         x = 200,
@@ -473,6 +504,39 @@ function LootMonitor:FindItemTextureInBags(itemName)
     return texture
 end
 
+-- Count total amount of an item in all bags
+function LootMonitor:CountItemInBags(itemName)
+    if not itemName then return 0 end
+    
+    local totalCount = 0
+    
+    -- Search through all bags
+    for bag = 0, 4 do
+        local numSlots = GetContainerNumSlots(bag)
+        if numSlots and numSlots > 0 then
+            for slot = 1, numSlots do
+                local itemLink = GetContainerItemLink(bag, slot)
+                if itemLink then
+                    -- Extract item name from link
+                    local linkStart = strfind(itemLink, "%[")
+                    local linkEnd = strfind(itemLink, "%]")
+                    if linkStart and linkEnd then
+                        local linkName = strsub(itemLink, linkStart + 1, linkEnd - 1)
+                        if linkName == itemName then
+                            local _, itemCount = GetContainerItemInfo(bag, slot)
+                            if itemCount then
+                                totalCount = totalCount + itemCount
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return totalCount
+end
+
 -- Create a new loot notification
 function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isNameOnly)
     -- Clean up old notifications first
@@ -517,11 +581,17 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     glow:SetBackdropBorderColor(1, 0.8, 0, 1) -- Bright yellow-orange border
     glow:Hide() -- Hidden by default
     
-    -- Create text
+    -- Create main text
     local text = notification:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     text:SetPoint("LEFT", icon, "RIGHT", 8, 0)
-    text:SetPoint("RIGHT", notification, "RIGHT", -5, 0)
     text:SetJustifyH("LEFT")
+    
+    -- Create total count text (purple)
+    local totalText = notification:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    totalText:SetPoint("LEFT", text, "RIGHT", 5, 0)
+    totalText:SetPoint("RIGHT", notification, "RIGHT", -5, 0)
+    totalText:SetJustifyH("LEFT")
+    totalText:SetTextColor(0.8, 0.4, 1) -- Purple color
     
     -- Store notification data (we'll check for quest item status after a delay)
     local notificationData = {
@@ -529,6 +599,7 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
         icon = icon,
         glow = glow,
         text = text,
+        totalText = totalText,
         name = itemName,
         count = quantity,
         data = itemData,
@@ -547,6 +618,11 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     -- Schedule quest item check with a slight delay (item needs to be in bags first)
     self:ScheduleQuestItemCheck(notificationData)
     
+    -- Schedule total count update with a slight delay (item needs to be in bags first)
+    if LootMonitorDB.showTotalCount then
+        self:ScheduleTotalCountUpdate(notificationData)
+    end
+    
     -- Start fade animation
     self:StartNotificationAnimation(notificationData)
     
@@ -562,15 +638,27 @@ function LootMonitor:UpdateNotificationText(notification)
     end
     notification.text:SetText(displayText)
     
+    -- Get total count in bags and display in purple (if enabled)
+    if LootMonitorDB.showTotalCount then
+        local totalCount = self:CountItemInBags(notification.name)
+        if totalCount > 0 then
+            notification.totalText:SetText("(" .. totalCount .. ")")
+        else
+            notification.totalText:SetText("")
+        end
+    else
+        notification.totalText:SetText("")
+    end
+    
     -- Set color based on item quality if available
     if not notification.isNameOnly and notification.data then
-        local colorStart = string.find(notification.data, "|c")
+        local colorStart = strfind(notification.data, "|c")
         if colorStart then
-            local colorCode = string.sub(notification.data, colorStart + 2, colorStart + 9)
+            local colorCode = strsub(notification.data, colorStart + 2, colorStart + 9)
             if string.len(colorCode) == 8 then
-                local r = tonumber(string.sub(colorCode, 3, 4), 16) / 255
-                local g = tonumber(string.sub(colorCode, 5, 6), 16) / 255
-                local b = tonumber(string.sub(colorCode, 7, 8), 16) / 255
+                local r = tonumber(strsub(colorCode, 3, 4), 16) / 255
+                local g = tonumber(strsub(colorCode, 5, 6), 16) / 255
+                local b = tonumber(strsub(colorCode, 7, 8), 16) / 255
                 notification.text:SetTextColor(r, g, b)
             else
                 notification.text:SetTextColor(1, 1, 1)
@@ -582,6 +670,8 @@ function LootMonitor:UpdateNotificationText(notification)
         notification.text:SetTextColor(1, 1, 1)
     end
 end
+
+
 
 -- Schedule asynchronous icon search
 function LootMonitor:ScheduleIconSearch(notification)
@@ -919,10 +1009,10 @@ end
 
 -- Create settings panel
 function LootMonitor:CreateSettingsPanel()
-    -- Create main frame
+    -- Create main frame (much taller and modern)
     local frame = CreateFrame("Frame", "LootMonitorSettingsFrame", UIParent)
-    frame:SetWidth(400)
-    frame:SetHeight(400)
+    frame:SetWidth(450)
+    frame:SetHeight(600)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -930,150 +1020,256 @@ function LootMonitor:CreateSettingsPanel()
     frame:SetScript("OnDragStart", function() frame:StartMoving() end)
     frame:SetScript("OnDragStop", function() frame:StopMovingOrSizing() end)
     
-    -- Background
+    -- Modern gradient background
     local bg = frame:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(frame)
-    bg:SetTexture(0, 0, 0, 0.8)
+    bg:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
+    bg:SetGradientAlpha("VERTICAL", 0.1, 0.1, 0.2, 0.95, 0.05, 0.05, 0.15, 0.95)
     
-    -- Border
+    -- Modern border with rounded corners effect
     frame:SetBackdrop({
-        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
         edgeSize = 16,
         insets = { left = 4, right = 4, top = 4, bottom = 4 }
     })
+    frame:SetBackdropColor(0.05, 0.05, 0.15, 0.9)
+    frame:SetBackdropBorderColor(0.3, 0.5, 0.8, 1)
     
-    -- Title
+    -- Simple title section (no weird gradient)
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOP", frame, "TOP", 0, -15)
+    title:SetPoint("TOP", frame, "TOP", 0, -25)
     title:SetText("Loot Monitor Settings")
     title:SetTextColor(1, 1, 1)
+    title:SetFont("Fonts\\FRIZQT__.TTF", 16, "OUTLINE")
     
-    -- Close button
+    -- Subtitle
+    local subtitle = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    subtitle:SetPoint("TOP", title, "BOTTOM", 0, -8)
+    subtitle:SetText("Configure your loot notification preferences")
+    subtitle:SetTextColor(0.7, 0.7, 0.8)
+    
+    -- Modern close button
     local closeBtn = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
-    closeBtn:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -5)
+    closeBtn:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, -8)
     closeBtn:SetScript("OnClick", function() frame:Hide() end)
     
-    local yPos = -50
+    -- Content area with better spacing
+    local contentY = -70
     
-    -- Enable/Disable checkbox
+    -- General Settings Section
+    local generalHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    generalHeader:SetPoint("TOPLEFT", frame, "TOPLEFT", 25, contentY)
+    generalHeader:SetText("General Settings")
+    generalHeader:SetTextColor(0.4, 0.8, 1)
+    
+    contentY = contentY - 30
+    
+    -- Enable/Disable checkbox with modern styling
     local enableCheck = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
-    enableCheck:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, yPos)
+    enableCheck:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, contentY)
     enableCheck:SetChecked(LootMonitorDB.enabled)
     local enableLabel = enableCheck:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    enableLabel:SetPoint("LEFT", enableCheck, "RIGHT", 5, 0)
-    enableLabel:SetText("Enable Notifications")
+    enableLabel:SetPoint("LEFT", enableCheck, "RIGHT", 8, 0)
+    enableLabel:SetText("Enable Loot Notifications")
+    enableLabel:SetTextColor(0.9, 0.9, 1)
     enableCheck:SetScript("OnClick", function()
         LootMonitorDB.enabled = enableCheck:GetChecked()
     end)
     
-    yPos = yPos - 40
+    contentY = contentY - 35
+    
+    -- Display Features Section
+    local featuresHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    featuresHeader:SetPoint("TOPLEFT", frame, "TOPLEFT", 25, contentY)
+    featuresHeader:SetText("Display Features")
+    featuresHeader:SetTextColor(0.4, 0.8, 1)
+    
+    contentY = contentY - 30
     
     -- Quest Item Glow checkbox
     local questGlowCheck = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
-    questGlowCheck:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, yPos)
+    questGlowCheck:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, contentY)
     questGlowCheck:SetChecked(LootMonitorDB.questItemGlow)
     local questGlowLabel = questGlowCheck:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    questGlowLabel:SetPoint("LEFT", questGlowCheck, "RIGHT", 5, 0)
+    questGlowLabel:SetPoint("LEFT", questGlowCheck, "RIGHT", 8, 0)
     questGlowLabel:SetText("Quest Item Glow Effect")
+    questGlowLabel:SetTextColor(0.9, 0.9, 1)
     questGlowCheck:SetScript("OnClick", function()
         LootMonitorDB.questItemGlow = questGlowCheck:GetChecked()
     end)
     
-    yPos = yPos - 40
+    contentY = contentY - 35
     
-    -- Scale slider
+    -- Show Total Count checkbox
+    local totalCountCheck = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+    totalCountCheck:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, contentY)
+    totalCountCheck:SetChecked(LootMonitorDB.showTotalCount)
+    local totalCountLabel = totalCountCheck:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    totalCountLabel:SetPoint("LEFT", totalCountCheck, "RIGHT", 8, 0)
+    totalCountLabel:SetText("Show Total Count in Bags")
+    totalCountLabel:SetTextColor(0.9, 0.9, 1)
+    totalCountCheck:SetScript("OnClick", function()
+        LootMonitorDB.showTotalCount = totalCountCheck:GetChecked()
+    end)
+    
+    contentY = contentY - 45
+    
+    -- Animation Settings Section
+    local animHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    animHeader:SetPoint("TOPLEFT", frame, "TOPLEFT", 25, contentY)
+    animHeader:SetText("Animation Settings")
+    animHeader:SetTextColor(0.4, 0.8, 1)
+    
+    contentY = contentY - 35
+    
+    -- Scale slider with modern styling
     local scaleLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    scaleLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, yPos)
-    scaleLabel:SetText("Scale: " .. string.format("%.1f", LootMonitorDB.scale))
+    scaleLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, contentY)
+    scaleLabel:SetText("Scale: " .. format("%.1f", LootMonitorDB.scale))
+    scaleLabel:SetTextColor(0.9, 0.9, 1)
     
     local scaleSlider = CreateFrame("Slider", nil, frame, "OptionsSliderTemplate")
-    scaleSlider:SetPoint("TOPLEFT", scaleLabel, "BOTTOMLEFT", 0, -10)
+    scaleSlider:SetPoint("TOPLEFT", scaleLabel, "BOTTOMLEFT", 0, -15)
     scaleSlider:SetMinMaxValues(0.5, 2.0)
     scaleSlider:SetValue(LootMonitorDB.scale)
     scaleSlider:SetValueStep(0.1)
-    scaleSlider:SetWidth(200)
+    scaleSlider:SetWidth(300)
     scaleSlider:SetScript("OnValueChanged", function()
         local value = scaleSlider:GetValue()
         LootMonitorDB.scale = value
-        scaleLabel:SetText("Scale: " .. string.format("%.1f", value))
+        scaleLabel:SetText("Scale: " .. format("%.1f", value))
     end)
     
-    yPos = yPos - 60
+    contentY = contentY - 65
     
     -- Fade In Time slider
     local fadeInLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    fadeInLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, yPos)
-    fadeInLabel:SetText("Fade In Time: " .. string.format("%.1f", LootMonitorDB.fadeInTime) .. "s")
+    fadeInLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, contentY)
+    fadeInLabel:SetText("Fade In Time: " .. format("%.1f", LootMonitorDB.fadeInTime) .. "s")
+    fadeInLabel:SetTextColor(0.9, 0.9, 1)
     
     local fadeInSlider = CreateFrame("Slider", nil, frame, "OptionsSliderTemplate")
-    fadeInSlider:SetPoint("TOPLEFT", fadeInLabel, "BOTTOMLEFT", 0, -10)
+    fadeInSlider:SetPoint("TOPLEFT", fadeInLabel, "BOTTOMLEFT", 0, -15)
     fadeInSlider:SetMinMaxValues(0.1, 2.0)
     fadeInSlider:SetValue(LootMonitorDB.fadeInTime)
     fadeInSlider:SetValueStep(0.1)
-    fadeInSlider:SetWidth(200)
+    fadeInSlider:SetWidth(300)
     fadeInSlider:SetScript("OnValueChanged", function()
         local value = fadeInSlider:GetValue()
         LootMonitorDB.fadeInTime = value
-        fadeInLabel:SetText("Fade In Time: " .. string.format("%.1f", value) .. "s")
+        fadeInLabel:SetText("Fade In Time: " .. format("%.1f", value) .. "s")
     end)
     
-    yPos = yPos - 60
+    contentY = contentY - 65
     
     -- Display Time slider
     local displayLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    displayLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, yPos)
-    displayLabel:SetText("Display Time: " .. string.format("%.1f", LootMonitorDB.displayTime) .. "s")
+    displayLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, contentY)
+    displayLabel:SetText("Display Time: " .. format("%.1f", LootMonitorDB.displayTime) .. "s")
+    displayLabel:SetTextColor(0.9, 0.9, 1)
     
     local displaySlider = CreateFrame("Slider", nil, frame, "OptionsSliderTemplate")
-    displaySlider:SetPoint("TOPLEFT", displayLabel, "BOTTOMLEFT", 0, -10)
+    displaySlider:SetPoint("TOPLEFT", displayLabel, "BOTTOMLEFT", 0, -15)
     displaySlider:SetMinMaxValues(1.0, 10.0)
     displaySlider:SetValue(LootMonitorDB.displayTime)
     displaySlider:SetValueStep(0.5)
-    displaySlider:SetWidth(200)
+    displaySlider:SetWidth(300)
     displaySlider:SetScript("OnValueChanged", function()
         local value = displaySlider:GetValue()
         LootMonitorDB.displayTime = value
-        displayLabel:SetText("Display Time: " .. string.format("%.1f", value) .. "s")
+        displayLabel:SetText("Display Time: " .. format("%.1f", value) .. "s")
     end)
     
-    yPos = yPos - 60
+    contentY = contentY - 65
     
     -- Fade Out Time slider
     local fadeOutLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    fadeOutLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, yPos)
-    fadeOutLabel:SetText("Fade Out Time: " .. string.format("%.1f", LootMonitorDB.fadeOutTime) .. "s")
+    fadeOutLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, contentY)
+    fadeOutLabel:SetText("Fade Out Time: " .. format("%.1f", LootMonitorDB.fadeOutTime) .. "s")
+    fadeOutLabel:SetTextColor(0.9, 0.9, 1)
     
     local fadeOutSlider = CreateFrame("Slider", nil, frame, "OptionsSliderTemplate")
-    fadeOutSlider:SetPoint("TOPLEFT", fadeOutLabel, "BOTTOMLEFT", 0, -10)
+    fadeOutSlider:SetPoint("TOPLEFT", fadeOutLabel, "BOTTOMLEFT", 0, -15)
     fadeOutSlider:SetMinMaxValues(0.5, 3.0)
     fadeOutSlider:SetValue(LootMonitorDB.fadeOutTime)
     fadeOutSlider:SetValueStep(0.1)
-    fadeOutSlider:SetWidth(200)
+    fadeOutSlider:SetWidth(300)
     fadeOutSlider:SetScript("OnValueChanged", function()
         local value = fadeOutSlider:GetValue()
         LootMonitorDB.fadeOutTime = value
-        fadeOutLabel:SetText("Fade Out Time: " .. string.format("%.1f", value) .. "s")
+        fadeOutLabel:SetText("Fade Out Time: " .. format("%.1f", value) .. "s")
     end)
     
-    -- Test button
+    -- Button area inside the window
+    local buttonY = 25 -- Distance from bottom, inside the frame
+    
+    -- Test button with even bigger size
     local testBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-    testBtn:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 20, 20)
-    testBtn:SetWidth(80)
-    testBtn:SetHeight(25)
-    testBtn:SetText("Test")
+    testBtn:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 15, buttonY)
+    testBtn:SetWidth(140)
+    testBtn:SetHeight(35)
+    testBtn:SetText("Test Notification")
+    testBtn:GetFontString():SetTextColor(1, 1, 1)
     testBtn:SetScript("OnClick", function()
         LootMonitor:CreateLootNotification("Test Item", 1, "Test Item", true)
     end)
     
-    -- Move button
+    -- Move button with even bigger size
     local moveBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-    moveBtn:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -20, 20)
-    moveBtn:SetWidth(80)
-    moveBtn:SetHeight(25)
-    moveBtn:SetText("Move")
+    moveBtn:SetPoint("BOTTOM", frame, "BOTTOM", 0, buttonY)
+    moveBtn:SetWidth(140)
+    moveBtn:SetHeight(35)
+    moveBtn:SetText("Position Window")
+    moveBtn:GetFontString():SetTextColor(1, 1, 1)
     moveBtn:SetScript("OnClick", function()
         frame:Hide()
         LootMonitor:ToggleMoveMode()
+    end)
+    
+    -- Reset button with even bigger size and full visual reset functionality
+    local resetBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    resetBtn:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -15, buttonY)
+    resetBtn:SetWidth(140)
+    resetBtn:SetHeight(35)
+    resetBtn:SetText("Reset Settings")
+    resetBtn:GetFontString():SetTextColor(1, 0.8, 0.8)
+    resetBtn:SetScript("OnClick", function()
+        -- Reset to defaults with proper deep copy for nested tables
+        LootMonitorDB.enabled = defaults.enabled
+        LootMonitorDB.scale = defaults.scale
+        LootMonitorDB.fadeInTime = defaults.fadeInTime
+        LootMonitorDB.displayTime = defaults.displayTime
+        LootMonitorDB.fadeOutTime = defaults.fadeOutTime
+        LootMonitorDB.questItemGlow = defaults.questItemGlow
+        LootMonitorDB.showTotalCount = defaults.showTotalCount
+        LootMonitorDB.position = {
+            point = defaults.position.point,
+            x = defaults.position.x,
+            y = defaults.position.y
+        }
+        
+        -- Update all checkboxes visually
+        enableCheck:SetChecked(defaults.enabled)
+        questGlowCheck:SetChecked(defaults.questItemGlow)
+        totalCountCheck:SetChecked(defaults.showTotalCount)
+        
+        -- Update all sliders and labels visually
+        scaleSlider:SetValue(defaults.scale)
+                 scaleLabel:SetText("Scale: " .. format("%.1f", defaults.scale))
+         
+         fadeInSlider:SetValue(defaults.fadeInTime)
+         fadeInLabel:SetText("Fade In Time: " .. format("%.1f", defaults.fadeInTime) .. "s")
+         
+         displaySlider:SetValue(defaults.displayTime)
+         displayLabel:SetText("Display Time: " .. format("%.1f", defaults.displayTime) .. "s")
+         
+         fadeOutSlider:SetValue(defaults.fadeOutTime)
+         fadeOutLabel:SetText("Fade Out Time: " .. format("%.1f", defaults.fadeOutTime) .. "s")
+        
+        Print("[Loot Monitor] Settings reset to defaults.")
     end)
     
     self.settingsFrame = frame
