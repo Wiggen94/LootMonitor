@@ -16,6 +16,100 @@ local function Print(msg)
     end
 end
 
+-- Create a hidden tooltip frame for scanning item tooltips
+local LootMonitorTooltip = CreateFrame("GameTooltip", "LootMonitorTooltip", nil, "GameTooltipTemplate")
+LootMonitorTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
+
+-- Check if an item is a quest item by scanning its tooltip
+function LootMonitor:IsQuestItem(itemName)
+    if not itemName then return false end
+    
+    -- First try to find the item in bags and scan its tooltip
+    local texture, bag, slot = self:FindItemInBags(itemName)
+    if bag and slot then
+        -- Clear the tooltip
+        LootMonitorTooltip:ClearLines()
+        
+        -- Set the tooltip to the item
+        LootMonitorTooltip:SetBagItem(bag, slot)
+        
+        -- Scan tooltip lines for quest indicators
+        for i = 1, LootMonitorTooltip:NumLines() do
+            local line = getglobal("LootMonitorTooltipTextLeft" .. i)
+            if line then
+                local text = line:GetText()
+                if text then
+                    local lowerText = string.lower(text)
+                    -- Look for quest item indicators in tooltip
+                    if string.find(lowerText, "quest item") or 
+                       string.find(lowerText, "quest") or
+                       string.find(lowerText, "binds when picked up") then
+                        return true
+                    end
+                end
+            end
+        end
+        
+        -- Also check right side of tooltip
+        for i = 1, LootMonitorTooltip:NumLines() do
+            local line = getglobal("LootMonitorTooltipTextRight" .. i)
+            if line then
+                local text = line:GetText()
+                if text then
+                    local lowerText = string.lower(text)
+                    if string.find(lowerText, "quest item") or 
+                       string.find(lowerText, "quest") then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    
+    return false
+end
+
+-- Schedule a delayed quest item check (item needs time to appear in bags)
+function LootMonitor:ScheduleQuestItemCheck(notification)
+    local checkFrame = CreateFrame("Frame")
+    local startTime = GetTime()
+    local maxCheckTime = 2.0 -- Check for up to 2 seconds
+    local checkInterval = 0.2 -- Check every 0.2 seconds
+    local lastCheck = 0
+    
+    checkFrame:SetScript("OnUpdate", function()
+        local elapsed = GetTime() - startTime
+        local timeSinceLastCheck = GetTime() - lastCheck
+        
+        -- Stop checking after max time
+        if elapsed > maxCheckTime then
+            checkFrame:SetScript("OnUpdate", nil)
+            return
+        end
+        
+        -- Only check at intervals
+        if timeSinceLastCheck < checkInterval then
+            return
+        end
+        
+        lastCheck = GetTime()
+        
+                 -- Try to detect quest item
+         local isQuestItem = LootMonitor:IsQuestItem(notification.name)
+         
+         if isQuestItem and LootMonitorDB.questItemGlow then
+             notification.isQuestItem = true
+             notification.glow:Show()
+             notification.glow:SetBackdropBorderColor(1, 0.8, 0, 1) -- Bright orange-yellow border
+             notification.glow:SetBackdropColor(1, 1, 0, 0.4) -- Visible yellow background
+             LootMonitor:StartGlowAnimation(notification)
+             checkFrame:SetScript("OnUpdate", nil) -- Stop checking
+         else
+             checkFrame:SetScript("OnUpdate", nil) -- Stop checking even if glow is disabled
+         end
+    end)
+end
+
 -- Default settings
 local defaults = {
     enabled = true,
@@ -23,6 +117,7 @@ local defaults = {
     fadeInTime = 0.3,
     displayTime = 5.0,
     fadeOutTime = 1.0,
+    questItemGlow = true,
     position = {
         point = "CENTER",
         x = 200,
@@ -391,21 +486,40 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     icon:SetPoint("LEFT", notification, "LEFT", 0, 0)
     icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") -- Default icon
     
+    -- Create glow effect for quest items (much more visible)
+    local glow = CreateFrame("Frame", nil, notification)
+    glow:SetWidth(38)  -- Slightly bigger than icon
+    glow:SetHeight(38)
+    glow:SetPoint("CENTER", icon, "CENTER", 0, 0)
+    glow:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    glow:SetBackdropColor(1, 1, 0, 0.3) -- Yellow background
+    glow:SetBackdropBorderColor(1, 0.8, 0, 1) -- Bright yellow-orange border
+    glow:Hide() -- Hidden by default
+    
     -- Create text
     local text = notification:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     text:SetPoint("LEFT", icon, "RIGHT", 8, 0)
     text:SetPoint("RIGHT", notification, "RIGHT", -5, 0)
     text:SetJustifyH("LEFT")
     
-    -- Store notification data
+    -- Store notification data (we'll check for quest item status after a delay)
     local notificationData = {
         frame = notification,
         icon = icon,
+        glow = glow,
         text = text,
         name = itemName,
         count = quantity,
         data = itemData,
         isNameOnly = isNameOnly,
+        isQuestItem = false, -- Will be set later
         startTime = GetTime(),
         fadingOut = false
     }
@@ -415,6 +529,9 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     
     -- Add to active notifications
     table.insert(self.activeNotifications, 1, notificationData)
+    
+    -- Schedule quest item check with a slight delay (item needs to be in bags first)
+    self:ScheduleQuestItemCheck(notificationData)
     
     -- Start fade animation
     self:StartNotificationAnimation(notificationData)
@@ -515,6 +632,37 @@ function LootMonitor:GetFallbackIcon(itemName)
     end
 end
 
+-- Start glow animation for quest items
+function LootMonitor:StartGlowAnimation(notification)
+    local glowFrame = CreateFrame("Frame")
+    notification.glowAnimFrame = glowFrame
+    
+    local startTime = GetTime()
+    local glowDuration = 1.0 -- Faster pulsing
+    
+    glowFrame:SetScript("OnUpdate", function()
+        local elapsed = GetTime() - startTime
+        local cycle = mod(elapsed, glowDuration) / glowDuration
+        
+        -- Create a visible pulsing effect (smaller size)
+        local borderAlpha = 0.5 + 0.5 * (1 + math.sin(cycle * 2 * math.pi)) / 2
+        local bgAlpha = 0.1 + 0.4 * (1 + math.sin(cycle * 2 * math.pi)) / 2
+        local scale = 1.0 + 0.08 * (1 + math.sin(cycle * 2 * math.pi)) / 2
+        
+        if notification.glow then
+            -- Pulse the border and background
+            notification.glow:SetBackdropBorderColor(1, 0.8, 0, borderAlpha)
+            notification.glow:SetBackdropColor(1, 1, 0, bgAlpha)
+            
+            -- Scale the glow frame (smaller scaling)
+            local baseSize = 38
+            local newSize = baseSize * scale
+            notification.glow:SetWidth(newSize)
+            notification.glow:SetHeight(newSize)
+        end
+    end)
+end
+
 -- Start fade animation for notification
 function LootMonitor:StartNotificationAnimation(notification)
     local animFrame = CreateFrame("Frame")
@@ -568,6 +716,10 @@ end
 function LootMonitor:RemoveNotification(notification)
     if notification.animFrame then
         notification.animFrame:SetScript("OnUpdate", nil)
+    end
+    
+    if notification.glowAnimFrame then
+        notification.glowAnimFrame:SetScript("OnUpdate", nil)
     end
     
     if notification.frame then
@@ -798,6 +950,19 @@ function LootMonitor:CreateSettingsPanel()
     enableLabel:SetText("Enable Notifications")
     enableCheck:SetScript("OnClick", function()
         LootMonitorDB.enabled = enableCheck:GetChecked()
+    end)
+    
+    yPos = yPos - 40
+    
+    -- Quest Item Glow checkbox
+    local questGlowCheck = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+    questGlowCheck:SetPoint("TOPLEFT", frame, "TOPLEFT", 20, yPos)
+    questGlowCheck:SetChecked(LootMonitorDB.questItemGlow)
+    local questGlowLabel = questGlowCheck:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    questGlowLabel:SetPoint("LEFT", questGlowCheck, "RIGHT", 5, 0)
+    questGlowLabel:SetText("Quest Item Glow Effect")
+    questGlowCheck:SetScript("OnClick", function()
+        LootMonitorDB.questItemGlow = questGlowCheck:GetChecked()
     end)
     
     yPos = yPos - 40
