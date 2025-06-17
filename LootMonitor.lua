@@ -1,6 +1,20 @@
 -- Loot Monitor for Turtle WoW
 -- Shows recent loot as fading text notifications
 
+-- Local references for better performance
+local strfind = string.find
+local strlower = string.lower
+local strsub = string.sub
+local strformat = string.format
+local tinsert = table.insert
+local tremove = table.remove
+local tgetn = table.getn
+local mathsin = math.sin
+local mathpi = math.pi
+local gettime = GetTime
+local tonumber = tonumber
+local getglobal = getglobal
+
 -- Initialize addon
 LootMonitor = {}
 LootMonitor.activeNotifications = {}
@@ -39,11 +53,11 @@ function LootMonitor:IsQuestItem(itemName)
             if line then
                 local text = line:GetText()
                 if text then
-                    local lowerText = string.lower(text)
+                    local lowerText = strlower(text)
                     -- Look for quest item indicators in tooltip
-                    if string.find(lowerText, "quest item") or 
-                       string.find(lowerText, "quest") or
-                       string.find(lowerText, "binds when picked up") then
+                    if strfind(lowerText, "quest item") or 
+                       strfind(lowerText, "quest") or
+                       strfind(lowerText, "binds when picked up") then
                         return true
                     end
                 end
@@ -56,9 +70,9 @@ function LootMonitor:IsQuestItem(itemName)
             if line then
                 local text = line:GetText()
                 if text then
-                    local lowerText = string.lower(text)
-                    if string.find(lowerText, "quest item") or 
-                       string.find(lowerText, "quest") then
+                    local lowerText = strlower(text)
+                    if strfind(lowerText, "quest item") or 
+                       strfind(lowerText, "quest") then
                         return true
                     end
                 end
@@ -72,14 +86,14 @@ end
 -- Schedule a delayed quest item check (item needs time to appear in bags)
 function LootMonitor:ScheduleQuestItemCheck(notification)
     local checkFrame = CreateFrame("Frame")
-    local startTime = GetTime()
+    local startTime = gettime()
     local maxCheckTime = 2.0 -- Check for up to 2 seconds
     local checkInterval = 0.2 -- Check every 0.2 seconds
     local lastCheck = 0
     
     checkFrame:SetScript("OnUpdate", function()
-        local elapsed = GetTime() - startTime
-        local timeSinceLastCheck = GetTime() - lastCheck
+        local elapsed = gettime() - startTime
+        local timeSinceLastCheck = gettime() - lastCheck
         
         -- Stop checking after max time
         if elapsed > maxCheckTime then
@@ -92,7 +106,7 @@ function LootMonitor:ScheduleQuestItemCheck(notification)
             return
         end
         
-        lastCheck = GetTime()
+        lastCheck = gettime()
         
                  -- Try to detect quest item
          local isQuestItem = LootMonitor:IsQuestItem(notification.name)
@@ -465,8 +479,8 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     self:CleanupNotifications()
     
     -- Limit active notifications
-    while table.getn(self.activeNotifications) >= self.maxNotifications do
-        local oldest = self.activeNotifications[table.getn(self.activeNotifications)]
+    while tgetn(self.activeNotifications) >= self.maxNotifications do
+        local oldest = self.activeNotifications[tgetn(self.activeNotifications)]
         self:RemoveNotification(oldest)
     end
     
@@ -476,7 +490,7 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     notification:SetHeight(40)
     
     -- Position notifications vertically
-    local yOffset = table.getn(self.activeNotifications) * -35
+    local yOffset = tgetn(self.activeNotifications) * -35
     notification:SetPoint("TOP", self.frame, "TOP", 0, yOffset)
     
     -- Create icon
@@ -520,7 +534,7 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
         data = itemData,
         isNameOnly = isNameOnly,
         isQuestItem = false, -- Will be set later
-        startTime = GetTime(),
+        startTime = gettime(),
         fadingOut = false
     }
     
@@ -528,7 +542,7 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     self:UpdateNotificationText(notificationData)
     
     -- Add to active notifications
-    table.insert(self.activeNotifications, 1, notificationData)
+    tinsert(self.activeNotifications, 1, notificationData)
     
     -- Schedule quest item check with a slight delay (item needs to be in bags first)
     self:ScheduleQuestItemCheck(notificationData)
@@ -637,17 +651,17 @@ function LootMonitor:StartGlowAnimation(notification)
     local glowFrame = CreateFrame("Frame")
     notification.glowAnimFrame = glowFrame
     
-    local startTime = GetTime()
+    local startTime = gettime()
     local glowDuration = 1.0 -- Faster pulsing
     
     glowFrame:SetScript("OnUpdate", function()
-        local elapsed = GetTime() - startTime
+        local elapsed = gettime() - startTime
         local cycle = mod(elapsed, glowDuration) / glowDuration
         
         -- Create a visible pulsing effect (smaller size)
-        local borderAlpha = 0.5 + 0.5 * (1 + math.sin(cycle * 2 * math.pi)) / 2
-        local bgAlpha = 0.1 + 0.4 * (1 + math.sin(cycle * 2 * math.pi)) / 2
-        local scale = 1.0 + 0.08 * (1 + math.sin(cycle * 2 * math.pi)) / 2
+        local borderAlpha = 0.5 + 0.5 * (1 + mathsin(cycle * 2 * mathpi)) / 2
+        local bgAlpha = 0.1 + 0.4 * (1 + mathsin(cycle * 2 * mathpi)) / 2
+        local scale = 1.0 + 0.08 * (1 + mathsin(cycle * 2 * mathpi)) / 2
         
         if notification.glow then
             -- Pulse the border and background
@@ -730,7 +744,7 @@ function LootMonitor:RemoveNotification(notification)
     -- Remove from active list
     for i, activeNotification in ipairs(self.activeNotifications) do
         if activeNotification == notification then
-            table.remove(self.activeNotifications, i)
+            tremove(self.activeNotifications, i)
             break
         end
     end
