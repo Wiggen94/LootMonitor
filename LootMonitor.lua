@@ -507,6 +507,20 @@ function LootMonitor:FindItemTextureInBags(itemName)
     return texture
 end
 
+-- Check if an item is a coin/money item (actual currency, not items containing these words)
+function LootMonitor:IsCoinItem(itemName)
+    if not itemName then return false end
+    local lowerName = strlower(itemName)
+    -- Only match exact coin patterns like "5 Copper", "2 Silver", "1 Gold"
+    -- Check if it starts with a number followed by space and then the coin type
+    return strfind(lowerName, "^%d+ copper$") or 
+           strfind(lowerName, "^%d+ silver$") or 
+           strfind(lowerName, "^%d+ gold$") or
+           lowerName == "copper" or 
+           lowerName == "silver" or 
+           lowerName == "gold"
+end
+
 -- Count total amount of an item in all bags
 function LootMonitor:CountItemInBags(itemName)
     if not itemName then return 0 end
@@ -551,26 +565,44 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
         self:RemoveNotification(oldest)
     end
     
-    -- Create notification frame
-    local notification = CreateFrame("Frame", nil, self.frame)
-    notification:SetWidth(350)
-    notification:SetHeight(40)
+    -- Check if this is a coin notification
+    local isCoin = self:IsCoinItem(itemName)
     
-    -- Position notifications vertically
-    local yOffset = tgetn(self.activeNotifications) * -35
+    -- Create notification frame with different size for coins
+    local notification = CreateFrame("Frame", nil, self.frame)
+    if isCoin then
+        notification:SetWidth(280) -- Smaller width for coins
+        notification:SetHeight(32) -- Smaller height for coins
+    else
+        notification:SetWidth(350)
+        notification:SetHeight(40)
+    end
+    
+    -- Position notifications vertically (with different spacing for coins)
+    local yOffset = tgetn(self.activeNotifications) * (isCoin and -28 or -35)
     notification:SetPoint("TOP", self.frame, "TOP", 0, yOffset)
     
-    -- Create icon
+    -- Create icon with different size for coins
     local icon = notification:CreateTexture(nil, "ARTWORK")
-    icon:SetWidth(32)
-    icon:SetHeight(32)
+    if isCoin then
+        icon:SetWidth(24) -- Smaller icon for coins
+        icon:SetHeight(24)
+    else
+        icon:SetWidth(32)
+        icon:SetHeight(32)
+    end
     icon:SetPoint("LEFT", notification, "LEFT", 0, 0)
     icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") -- Default icon
     
-    -- Create glow effect for quest items (much more visible)
+    -- Create glow effect for quest items (different size for coins)
     local glow = CreateFrame("Frame", nil, notification)
-    glow:SetWidth(38)  -- Slightly bigger than icon
-    glow:SetHeight(38)
+    if isCoin then
+        glow:SetWidth(30)  -- Smaller glow for coins
+        glow:SetHeight(30)
+    else
+        glow:SetWidth(38)  -- Regular size for items
+        glow:SetHeight(38)
+    end
     glow:SetPoint("CENTER", icon, "CENTER", 0, 0)
     glow:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -584,13 +616,13 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     glow:SetBackdropBorderColor(1, 0.8, 0, 1) -- Bright yellow-orange border
     glow:Hide() -- Hidden by default
     
-    -- Create main text
-    local text = notification:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    -- Create main text with different styling for coins
+    local text = notification:CreateFontString(nil, "OVERLAY", isCoin and "GameFontNormal" or "GameFontNormalLarge")
     text:SetPoint("LEFT", icon, "RIGHT", 8, 0)
     text:SetJustifyH("LEFT")
     
-    -- Create total count text (purple)
-    local totalText = notification:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    -- Create total count text (purple) - smaller for coins
+    local totalText = notification:CreateFontString(nil, "OVERLAY", isCoin and "GameFontNormalSmall" or "GameFontNormalLarge")
     totalText:SetPoint("LEFT", text, "RIGHT", 5, 0)
     totalText:SetPoint("RIGHT", notification, "RIGHT", -5, 0)
     totalText:SetJustifyH("LEFT")
@@ -607,6 +639,7 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
         count = quantity,
         data = itemData,
         isNameOnly = isNameOnly,
+        isCoin = isCoin,
         isQuestItem = false, -- Will be set later
         startTime = gettime(),
         fadingOut = false
@@ -653,8 +686,12 @@ function LootMonitor:UpdateNotificationText(notification)
         notification.totalText:SetText("")
     end
     
-    -- Set color based on item quality if available
-    if not notification.isNameOnly and notification.data then
+    -- Set color based on item type
+    if notification.isCoin then
+        -- Golden color for coins
+        notification.text:SetTextColor(1, 0.82, 0) -- Gold color
+    elseif not notification.isNameOnly and notification.data then
+        -- Use item quality color if available
         local colorStart = strfind(notification.data, "|c")
         if colorStart then
             local colorCode = strsub(notification.data, colorStart + 2, colorStart + 9)
@@ -800,21 +837,24 @@ function LootMonitor:StartNotificationAnimation(notification)
     local animFrame = CreateFrame("Frame")
     notification.animFrame = animFrame
     
+    -- Different scaling for coins
+    local baseScale = notification.isCoin and (LootMonitorDB.scale * 0.8) or LootMonitorDB.scale
+    local fadeInTime = notification.isCoin and (LootMonitorDB.fadeInTime * 0.7) or LootMonitorDB.fadeInTime
+    local displayTime = notification.isCoin and (LootMonitorDB.displayTime * 0.6) or LootMonitorDB.displayTime
+    local fadeOutTime = notification.isCoin and (LootMonitorDB.fadeOutTime * 0.8) or LootMonitorDB.fadeOutTime
+    
     -- Set initial alpha
     notification.frame:SetAlpha(0)
-    notification.frame:SetScale(LootMonitorDB.scale * 0.8) -- Start smaller
+    notification.frame:SetScale(baseScale * 0.8) -- Start smaller
     
     animFrame:SetScript("OnUpdate", function()
         local elapsed = GetTime() - notification.startTime
-        local fadeInTime = LootMonitorDB.fadeInTime
-        local displayTime = LootMonitorDB.displayTime
-        local fadeOutTime = LootMonitorDB.fadeOutTime
         
         if elapsed < fadeInTime then
             -- Fade in phase
             local progress = elapsed / fadeInTime
             local alpha = progress
-            local scale = LootMonitorDB.scale * (0.8 + 0.2 * progress) -- Scale from 80% to 100%
+            local scale = baseScale * (0.8 + 0.2 * progress) -- Scale from 80% to 100%
             
             notification.frame:SetAlpha(alpha)
             notification.frame:SetScale(scale)
@@ -822,7 +862,7 @@ function LootMonitor:StartNotificationAnimation(notification)
         elseif elapsed < fadeInTime + displayTime then
             -- Display phase
             notification.frame:SetAlpha(1)
-            notification.frame:SetScale(LootMonitorDB.scale)
+            notification.frame:SetScale(baseScale)
             
         elseif elapsed < fadeInTime + displayTime + fadeOutTime then
             -- Fade out phase
@@ -832,7 +872,7 @@ function LootMonitor:StartNotificationAnimation(notification)
             
             local fadeProgress = (elapsed - fadeInTime - displayTime) / fadeOutTime
             local alpha = 1 - fadeProgress
-            local scale = LootMonitorDB.scale * (1 + 0.1 * fadeProgress) -- Scale up slightly while fading
+            local scale = baseScale * (1 + 0.1 * fadeProgress) -- Scale up slightly while fading
             
             notification.frame:SetAlpha(alpha)
             notification.frame:SetScale(scale)
