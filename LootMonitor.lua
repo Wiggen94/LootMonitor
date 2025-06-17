@@ -390,7 +390,8 @@ function LootMonitor:ProcessSystemMessage(message)
     end
     
     -- Check for various quest reward patterns
-    if strfind(message, "You receive item:") or
+    if strfind(message, "Received item:") or
+       strfind(message, "You receive item:") or
        strfind(message, "You receive") or
        strfind(message, "receive") then
         
