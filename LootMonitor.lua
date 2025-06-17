@@ -9,6 +9,13 @@ LootMonitor.frame = nil
 LootMonitor.moveFrame = nil
 LootMonitor.moveMode = false
 
+-- Custom print function for WoW 1.12.1 compatibility
+local function Print(msg)
+    if DEFAULT_CHAT_FRAME then
+        DEFAULT_CHAT_FRAME:AddMessage(msg)
+    end
+end
+
 -- Default settings
 local defaults = {
     enabled = true,
@@ -38,7 +45,7 @@ function LootMonitor:OnLoad()
     
     self:CreateNotificationFrame()
     
-    print("[Loot Monitor] Loaded! Fading loot notifications enabled.")
+    Print("[Loot Monitor] Loaded! Fading loot notifications enabled.")
 end
 
 -- Create the notification container frame
@@ -236,7 +243,7 @@ function LootMonitor:ProcessSystemMessage(message)
        string.find(message, "You receive") or 
        string.find(message, "receive") or
        string.find(message, "%[")) then
-        print("[LootMonitor Debug] System message: " .. message)
+        Print("[LootMonitor Debug] System message: " .. message)
     end
     
     -- Check for various quest reward patterns
@@ -687,8 +694,8 @@ function LootMonitor:EnterMoveMode()
     -- Create sample notifications to show positioning
     self:CreateSampleNotifications()
     
-    print("[Loot Monitor] Move mode enabled. Drag the frame to reposition notifications.")
-    print("Type '/lootmonitor move' again to save position and exit move mode.")
+    Print("[Loot Monitor] Move mode enabled. Drag the frame to reposition notifications.")
+    Print("Type '/lootmonitor move' again to save position and exit move mode.")
 end
 
 -- Exit move mode
@@ -715,7 +722,7 @@ function LootMonitor:ExitMoveMode()
     -- Clear sample notifications
     self:ClearSampleNotifications()
     
-    print("[Loot Monitor] Position saved. Move mode disabled.")
+    Print("[Loot Monitor] Position saved. Move mode disabled.")
 end
 
 -- Create sample notifications for positioning
@@ -913,9 +920,9 @@ SlashCmdList["LOOTMONITOR"] = function(msg)
     if cmd == "toggle" then
         LootMonitorDB.enabled = not LootMonitorDB.enabled
         if LootMonitorDB.enabled then
-            print("[Loot Monitor] Fading loot notifications enabled.")
+            Print("[Loot Monitor] Fading loot notifications enabled.")
         else
-            print("[Loot Monitor] Fading loot notifications disabled.")
+            Print("[Loot Monitor] Fading loot notifications disabled.")
             -- Clear active notifications
             for _, notification in ipairs(LootMonitor.activeNotifications) do
                 LootMonitor:RemoveNotification(notification)
@@ -929,11 +936,11 @@ SlashCmdList["LOOTMONITOR"] = function(msg)
         for _, notification in ipairs(LootMonitor.activeNotifications) do
             LootMonitor:RemoveNotification(notification)
         end
-        print("[Loot Monitor] Active notifications cleared.")
+        Print("[Loot Monitor] Active notifications cleared.")
     elseif cmd == "test" then
         -- Test notification with fallback icon
         LootMonitor:CreateLootNotification("Test Item", 1, "Test Item", true)
-        print("[Loot Monitor] Test notification created.")
+        Print("[Loot Monitor] Test notification created.")
     elseif cmd == "move" then
         LootMonitor:ToggleMoveMode()
     elseif cmd == "settings" or cmd == "config" then
@@ -941,23 +948,23 @@ SlashCmdList["LOOTMONITOR"] = function(msg)
     elseif cmd == "debug" then
         if LootMonitor.debugMode then
             LootMonitor.debugMode = false
-            print("[Loot Monitor] Debug mode disabled.")
+            Print("[Loot Monitor] Debug mode disabled.")
         else
             LootMonitor.debugMode = true
-            print("[Loot Monitor] Debug mode enabled. All system messages with items will be printed.")
+            Print("[Loot Monitor] Debug mode enabled. All system messages with items will be printed.")
         end
     elseif cmd == "help" then
-        print("[Loot Monitor] Commands:")
-        print("  /lootmonitor or /lm - Open settings panel")
-        print("  /lootmonitor toggle or /lm toggle - Toggle notifications on/off")
-        print("  /lootmonitor clear - Clear active notifications")
-        print("  /lootmonitor test - Create test notification")
-        print("  /lootmonitor move - Toggle move mode to reposition notifications")
-        print("  /lootmonitor settings - Open settings panel")
-        print("  /lootmonitor debug - Toggle debug mode to see system messages")
-        print("  /lootmonitor help - Show this help")
+        Print("[Loot Monitor] Commands:")
+        Print("  /lootmonitor or /lm - Open settings panel")
+        Print("  /lootmonitor toggle or /lm toggle - Toggle notifications on/off")
+        Print("  /lootmonitor clear - Clear active notifications")
+        Print("  /lootmonitor test - Create test notification")
+        Print("  /lootmonitor move - Toggle move mode to reposition notifications")
+        Print("  /lootmonitor settings - Open settings panel")
+        Print("  /lootmonitor debug - Toggle debug mode to see system messages")
+        Print("  /lootmonitor help - Show this help")
     else
-        print("[Loot Monitor] Unknown command. Use '/lootmonitor help' for help.")
+        Print("[Loot Monitor] Unknown command. Use '/lootmonitor help' for help.")
     end
 end
 
