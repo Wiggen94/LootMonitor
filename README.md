@@ -27,6 +27,20 @@ A sleek and customizable loot notification addon for Turtle WoW that displays fa
 - **Scale Options** - Resize notifications from 50% to 200%
 - **Toggle On/Off** - Quick enable/disable functionality
 
+## 📋 Changelog
+
+### Version 1.1 - Enhanced Features & UI
+- **🌟 Quest Item Glow Effect** - Optional yellow pulsing glow around quest item notifications for easy identification
+- **📊 Total Count Display** - Optional purple text showing total amount of looted item in your bags (e.g., "Copper Ore x2 (15)")
+- **🎨 Redesigned Settings Panel** 
+- **⚙️ Enhanced Reset Functionality** - Reset button now provides immediate visual feedback by updating all controls in real-time
+
+### Core Features
+- **Smart Quest Detection** - Automatically identifies quest items by scanning tooltips for "Quest Item" text
+- **Bag Count Integration** - Real-time counting of item quantities across all bags
+- **Professional UI** - Modern dark theme with blue accents and organized sections
+- **Visual Reset Feedback** - Settings reset shows immediate changes without panel refresh
+
 ## 📥 Installation
 
 ### Method 1: Download from GitHub
