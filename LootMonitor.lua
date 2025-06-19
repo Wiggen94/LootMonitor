@@ -215,8 +215,10 @@ function LootMonitor:RegisterEvents()
     frame:RegisterEvent("CHAT_MSG_SYSTEM")
     frame:RegisterEvent("ADDON_LOADED")
     frame:SetScript("OnEvent", function()
-        if event == "ADDON_LOADED" and arg1 == "LootMonitor" then
-            LootMonitor:OnLoad()
+        if event == "ADDON_LOADED" then
+            if not LootMonitor.initialized then
+                LootMonitor:OnLoad()
+            end
         elseif event == "CHAT_MSG_LOOT" then
             LootMonitor:ProcessLootMessage(arg1)
         elseif event == "CHAT_MSG_MONEY" then
@@ -1415,5 +1417,10 @@ end
 -- Initialize when addon loads
 if not LootMonitor.initialized then
     LootMonitor:RegisterEvents()
+    
+    if not LootMonitorDB then
+        LootMonitor:OnLoad()
+    end
+    
     LootMonitor.initialized = true
 end 
