@@ -69,9 +69,7 @@ LootMonitor.frame = nil
 LootMonitor.moveFrame = nil
 LootMonitor.moveMode = false
 
--- Object pooling for performance
-LootMonitor.framePool = {}
-LootMonitor.framePoolSize = 0
+
 
 -- Custom print function for WoW 1.12.1 compatibility
 local function Print(msg)
@@ -80,27 +78,7 @@ local function Print(msg)
     end
 end
 
--- Object pooling functions for performance
-function LootMonitor:GetPooledFrame()
-    if self.framePoolSize > 0 then
-        local frame = self.framePool[self.framePoolSize]
-        self.framePool[self.framePoolSize] = nil
-        self.framePoolSize = self.framePoolSize - 1
-        return frame
-    else
-        return CreateFrame("Frame")
-    end
-end
 
-function LootMonitor:ReturnFrameToPool(frame)
-    if self.framePoolSize < 10 then -- Limit pool size
-        self.framePoolSize = self.framePoolSize + 1
-        self.framePool[self.framePoolSize] = frame
-        frame:Hide()
-        frame:SetParent(nil)
-        frame:ClearAllPoints()
-    end
-end
 
 -- Create a hidden tooltip frame for scanning item tooltips
 local LootMonitorTooltip = CreateFrame("GameTooltip", "LootMonitorTooltip", nil, "GameTooltipTemplate")
@@ -699,9 +677,8 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     -- Check if this is a coin notification
     local isCoin = self:IsCoinItem(itemName)
     
-    -- Create notification frame with different size for coins (using object pool)
-    local notification = self:GetPooledFrame()
-    notification:SetParent(self.frame)
+    -- Create notification frame with different size for coins
+    local notification = CreateFrame("Frame", nil, self.frame)
     if isCoin then
         notification:SetWidth(280) -- Smaller width for coins
         notification:SetHeight(32) -- Smaller height for coins
@@ -1041,7 +1018,8 @@ function LootMonitor:RemoveNotification(notification)
     end
     
     if notification.frame then
-        self:ReturnFrameToPool(notification.frame)
+        notification.frame:Hide()
+        notification.frame:SetParent(nil)
         notification.frame = nil
     end
     
