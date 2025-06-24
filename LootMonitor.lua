@@ -32,6 +32,16 @@ local UIParent = UIParent
 local DEFAULT_CHAT_FRAME = DEFAULT_CHAT_FRAME
 local WorldFrame = WorldFrame
 
+-- Cache frequently accessed constants
+local TEXTURE_PATH_QUESTION = "Interface\\Icons\\INV_Misc_QuestionMark"
+local BACKDROP_TOOLTIP_BG = "Interface\\Tooltips\\UI-Tooltip-Background"
+local BACKDROP_TOOLTIP_BORDER = "Interface\\Tooltips\\UI-Tooltip-Border"
+
+-- Cache coin icon paths
+local COIN_ICON_COPPER = "Interface\\Icons\\INV_Misc_Coin_01"
+local COIN_ICON_SILVER = "Interface\\Icons\\INV_Misc_Coin_03"
+local COIN_ICON_GOLD = "Interface\\Icons\\INV_Misc_Coin_05"
+
 -- Cache math constants and frequently used numbers
 local MATH_2PI = mathpi * 2
 local COIN_SCALE_FACTOR = 0.8
@@ -568,9 +578,11 @@ function LootMonitor:AddLootItem(itemData, isNameOnly, quantity)
         itemName = itemData
     end
     
-    -- Check if we already have a notification for this item
+    -- Check if we already have a notification for this item (optimized)
     local existingNotification = nil
-    for _, notification in ipairs(self.activeNotifications) do
+    local activeList = self.activeNotifications
+    for i = 1, tgetn(activeList) do
+        local notification = activeList[i]
         if notification.name == itemName and not notification.fadingOut then
             existingNotification = notification
             break
@@ -712,7 +724,7 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
         icon:SetHeight(32)
     end
     icon:SetPoint("LEFT", notification, "LEFT", 0, 0)
-    icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") -- Default icon
+    icon:SetTexture(TEXTURE_PATH_QUESTION) -- Default icon
     
     -- Create glow effect for quest items (different size for coins)
     local glow = CreateFrame("Frame", nil, notification)
@@ -725,8 +737,8 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     end
     glow:SetPoint("CENTER", icon, "CENTER", 0, 0)
     glow:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        bgFile = BACKDROP_TOOLTIP_BG,
+        edgeFile = BACKDROP_TOOLTIP_BORDER,
         tile = true,
         tileSize = 16,
         edgeSize = 16,
@@ -896,11 +908,11 @@ function LootMonitor:GetFallbackIcon(itemName)
     
     -- Check for coins first
     if strfind(name, "copper") then
-        return "Interface\\Icons\\INV_Misc_Coin_01"
+        return COIN_ICON_COPPER
     elseif strfind(name, "silver") then
-        return "Interface\\Icons\\INV_Misc_Coin_03"
+        return COIN_ICON_SILVER
     elseif strfind(name, "gold") then
-        return "Interface\\Icons\\INV_Misc_Coin_05"
+        return COIN_ICON_GOLD
     -- Common item type patterns
     elseif strfind(name, "potion") or strfind(name, "elixir") then
         return "Interface\\Icons\\INV_Potion_52"
@@ -921,7 +933,7 @@ function LootMonitor:GetFallbackIcon(itemName)
     elseif strfind(name, "remnant") or strfind(name, "essence") then
         return "Interface\\Icons\\INV_Misc_Dust_02"
     else
-        return "Interface\\Icons\\INV_Misc_QuestionMark"
+        return TEXTURE_PATH_QUESTION
     end
 end
 
