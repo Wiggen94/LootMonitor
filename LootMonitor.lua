@@ -274,7 +274,7 @@ end
 function LootMonitor:CreateNotificationFrame()
     -- Create invisible container frame for notifications
     local frame = CreateFrame("Frame", "LootMonitorNotificationFrame", UIParent)
-    frame:SetWidth(400)
+    frame:SetWidth(400) -- Compact width for notifications
     frame:SetHeight(300)
     
     -- Set position from saved settings (with fallback to defaults)
@@ -680,10 +680,10 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     -- Create notification frame with different size for coins
     local notification = CreateFrame("Frame", nil, self.frame)
     if isCoin then
-        notification:SetWidth(280) -- Smaller width for coins
+        notification:SetWidth(320) -- Generous width for coins with count
         notification:SetHeight(32) -- Smaller height for coins
     else
-        notification:SetWidth(350)
+        notification:SetWidth(380) -- Generous width for items with count
         notification:SetHeight(40)
     end
     
@@ -729,13 +729,15 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     local text = notification:CreateFontString(nil, "OVERLAY", isCoin and "GameFontNormal" or "GameFontNormalLarge")
     text:SetPoint("LEFT", icon, "RIGHT", 8, 0)
     text:SetJustifyH("LEFT")
+    -- Set generous max width to prevent clipping but allow natural sizing
+    text:SetWidth(isCoin and 250 or 300)
     
     -- Create total count text (purple) - smaller for coins
     local totalText = notification:CreateFontString(nil, "OVERLAY", isCoin and "GameFontNormalSmall" or "GameFontNormalLarge")
-    totalText:SetPoint("LEFT", text, "RIGHT", 5, 0)
-    totalText:SetPoint("RIGHT", notification, "RIGHT", -5, 0)
     totalText:SetJustifyH("LEFT")
     totalText:SetTextColor(0.8, 0.4, 1) -- Purple color
+    -- Set generous width for count text
+    totalText:SetWidth(80)
     
     -- Store notification data (we'll check for quest item status after a delay)
     local notificationData = {
@@ -756,6 +758,9 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     
     -- Set initial text
     self:UpdateNotificationText(notificationData)
+    
+    -- Position total count text dynamically
+    self:PositionTotalCountText(notificationData)
     
     -- Add to active notifications
     tinsert(self.activeNotifications, 1, notificationData)
@@ -795,6 +800,9 @@ function LootMonitor:UpdateNotificationText(notification)
         notification.totalText:SetText("")
     end
     
+    -- Position total count text dynamically after main text
+    self:PositionTotalCountText(notification)
+    
     -- Set color based on item type
     if notification.isCoin then
         -- Golden color for coins
@@ -822,6 +830,16 @@ function LootMonitor:UpdateNotificationText(notification)
     else
         notification.text:SetTextColor(1, 1, 1)
     end
+end
+
+-- Position total count text dynamically after the main text
+function LootMonitor:PositionTotalCountText(notification)
+    -- Get the actual width of the rendered text
+    local textWidth = notification.text:GetStringWidth()
+    
+    -- Position total count text right after the main text
+    notification.totalText:ClearAllPoints()
+    notification.totalText:SetPoint("LEFT", notification.text, "LEFT", textWidth + 5, 0)
 end
 
 
