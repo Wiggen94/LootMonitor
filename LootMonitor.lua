@@ -1311,7 +1311,10 @@ function LootMonitor:CreateSettingsPanel()
     enableLabel:SetText("Enable Loot Notifications")
     enableLabel:SetTextColor(0.9, 0.9, 1)
     enableCheck:SetScript("OnClick", function()
-        LootMonitorDB.enabled = enableCheck:GetChecked()
+        -- In 1.12.1, GetChecked() returns nil when unchecked, not false
+        local checked = enableCheck:GetChecked()
+        LootMonitorDB.enabled = checked and true or false
+        LootMonitor:SaveSettings()
     end)
     
     contentY = contentY - 35
@@ -1333,7 +1336,10 @@ function LootMonitor:CreateSettingsPanel()
     questGlowLabel:SetText("Quest Item Glow Effect")
     questGlowLabel:SetTextColor(0.9, 0.9, 1)
     questGlowCheck:SetScript("OnClick", function()
-        LootMonitorDB.questItemGlow = questGlowCheck:GetChecked()
+        -- In 1.12.1, GetChecked() returns nil when unchecked, not false
+        local checked = questGlowCheck:GetChecked()
+        LootMonitorDB.questItemGlow = checked and true or false
+        LootMonitor:SaveSettings()
     end)
     
     contentY = contentY - 35
@@ -1347,7 +1353,11 @@ function LootMonitor:CreateSettingsPanel()
     totalCountLabel:SetText("Show Total Count in Bags")
     totalCountLabel:SetTextColor(0.9, 0.9, 1)
     totalCountCheck:SetScript("OnClick", function()
-        LootMonitorDB.showTotalCount = totalCountCheck:GetChecked()
+        -- In 1.12.1, GetChecked() returns nil when unchecked, not false
+        -- Convert nil to false explicitly
+        local checked = totalCountCheck:GetChecked()
+        LootMonitorDB.showTotalCount = checked and true or false
+        LootMonitor:SaveSettings()
     end)
     
     contentY = contentY - 45
@@ -1376,6 +1386,7 @@ function LootMonitor:CreateSettingsPanel()
         local value = scaleSlider:GetValue()
         LootMonitorDB.scale = value
         scaleLabel:SetText("Scale: " .. format("%.1f", value))
+        LootMonitor:SaveSettings()
     end)
     
     contentY = contentY - 65
@@ -1396,6 +1407,7 @@ function LootMonitor:CreateSettingsPanel()
         local value = fadeInSlider:GetValue()
         LootMonitorDB.fadeInTime = value
         fadeInLabel:SetText("Fade In Time: " .. format("%.1f", value) .. "s")
+        LootMonitor:SaveSettings()
     end)
     
     contentY = contentY - 65
@@ -1416,6 +1428,7 @@ function LootMonitor:CreateSettingsPanel()
         local value = displaySlider:GetValue()
         LootMonitorDB.displayTime = value
         displayLabel:SetText("Display Time: " .. format("%.1f", value) .. "s")
+        LootMonitor:SaveSettings()
     end)
     
     contentY = contentY - 65
@@ -1436,6 +1449,7 @@ function LootMonitor:CreateSettingsPanel()
         local value = fadeOutSlider:GetValue()
         LootMonitorDB.fadeOutTime = value
         fadeOutLabel:SetText("Fade Out Time: " .. format("%.1f", value) .. "s")
+        LootMonitor:SaveSettings()
     end)
     
     -- Button area inside the window
@@ -1529,6 +1543,7 @@ SlashCmdList["LOOTMONITOR"] = function(msg)
     
     if cmd == "toggle" then
         LootMonitorDB.enabled = not LootMonitorDB.enabled
+        LootMonitor:SaveSettings()
         if LootMonitorDB.enabled then
             Print("[Loot Monitor] Fading loot notifications enabled.")
         else
