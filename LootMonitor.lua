@@ -307,7 +307,8 @@ function LootMonitor:ScheduleTotalCountUpdate(notification)
 
         lastUpdate = gettime()
 
-        -- Update the total count display
+        -- Fetch count here (async) and cache it, then refresh text
+        notification.totalCount = LootMonitor:CountItemInBags(notification.name)
         LootMonitor:UpdateNotificationText(notification)
     end)
 end
@@ -1051,6 +1052,7 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
         isNameOnly = isNameOnly,
         isCoin = isCoin,
         isQuestItem = false, -- Will be set later
+        totalCount = 0,      -- Updated async by ScheduleTotalCountUpdate
         startTime = gettime(),
         fadingOut = false
     }
@@ -1059,10 +1061,23 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     if LootMonitorDB.clickToLink or LootMonitorDB.clickTooltip then
         notification:EnableMouse(true)
         notification:SetScript("OnEnter", function()
-            if LootMonitorDB.clickTooltip and notificationData.data and not isNameOnly then
-                GameTooltip:SetOwner(notification, "ANCHOR_RIGHT")
-                GameTooltip:SetHyperlink(notificationData.data)
-                GameTooltip:Show()
+            if not LootMonitorDB.clickTooltip or notificationData.isCoin then return end
+            if not notificationData.isNameOnly and notificationData.data then
+                -- Extract item:xxx from the full colored link for SetHyperlink
+                local _, _, itemCode = strfind(notificationData.data, "|H([^|]+)|h")
+                if itemCode then
+                    GameTooltip:SetOwner(notification, "ANCHOR_RIGHT")
+                    GameTooltip:SetHyperlink(itemCode)
+                    GameTooltip:Show()
+                end
+            else
+                -- Name-only: find item in bags and use SetBagItem
+                local _, bag, slot = LootMonitor:FindItemInBags(notificationData.name)
+                if bag and slot then
+                    GameTooltip:SetOwner(notification, "ANCHOR_RIGHT")
+                    GameTooltip:SetBagItem(bag, slot)
+                    GameTooltip:Show()
+                end
             end
         end)
         notification:SetScript("OnLeave", function()
@@ -1107,9 +1122,9 @@ function LootMonitor:UpdateNotificationText(notification)
     end
     notification.text:SetText(displayText)
     
-    -- Get total count in bags and display in purple (if enabled)
+    -- Display cached total count (updated async by ScheduleTotalCountUpdate)
     if LootMonitorDB.showTotalCount then
-        local totalCount = self:CountItemInBags(notification.name)
+        local totalCount = notification.totalCount or 0
         if totalCount > 0 then
             notification.totalText:SetText("(" .. totalCount .. ")")
         else
