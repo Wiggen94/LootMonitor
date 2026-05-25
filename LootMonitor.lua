@@ -12,6 +12,7 @@ local tinsert = table.insert
 local tremove = table.remove
 local tgetn = table.getn
 local mathsin = math.sin
+local mathcos = math.cos
 local mathpi = math.pi
 local mathmod = mod  -- Lua 5.0 uses global mod, not math.mod
 local gettime = GetTime
