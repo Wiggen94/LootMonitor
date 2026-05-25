@@ -234,15 +234,15 @@ function LootMonitor:ScheduleQuestItemCheck(notification)
     self.activeOnUpdateFrames = self.activeOnUpdateFrames + 1
 
     local checkFrame = CreateFrame("Frame")
-    local startTime = gettime()
+    local elapsed = 0
+    local accum = 0
     local maxCheckTime = 2.0 -- Check for up to 2 seconds
     local checkInterval = 0.2 -- Check every 0.2 seconds
-    local lastCheck = 0
 
     checkFrame:SetScript("OnUpdate", function()
-        local elapsed = gettime() - startTime
-        local timeSinceLastCheck = gettime() - lastCheck
-        
+        elapsed = elapsed + arg1
+        accum = accum + arg1
+
         -- Stop checking after max time
         if elapsed > maxCheckTime then
             checkFrame:SetScript("OnUpdate", nil)
@@ -251,13 +251,12 @@ function LootMonitor:ScheduleQuestItemCheck(notification)
         end
 
         -- Only check at intervals
-        if timeSinceLastCheck < checkInterval then
+        if accum < checkInterval then
             return
         end
+        accum = 0
 
-        lastCheck = gettime()
-
-                 -- Try to detect quest item
+         -- Try to detect quest item
          local isQuestItem = LootMonitor:IsQuestItem(notification.name)
 
          if isQuestItem and LootMonitorDB.questItemGlow then
@@ -284,14 +283,14 @@ function LootMonitor:ScheduleTotalCountUpdate(notification)
     self.activeOnUpdateFrames = self.activeOnUpdateFrames + 1
 
     local updateFrame = CreateFrame("Frame")
-    local startTime = gettime()
+    local elapsed = 0
+    local accum = 0
     local maxUpdateTime = 1.5 -- Check for up to 1.5 seconds
     local updateInterval = 0.3 -- Update every 0.3 seconds
-    local lastUpdate = 0
 
     updateFrame:SetScript("OnUpdate", function()
-        local elapsed = gettime() - startTime
-        local timeSinceLastUpdate = gettime() - lastUpdate
+        elapsed = elapsed + arg1
+        accum = accum + arg1
 
         -- Stop checking after max time
         if elapsed > maxUpdateTime then
@@ -301,11 +300,10 @@ function LootMonitor:ScheduleTotalCountUpdate(notification)
         end
 
         -- Only update at intervals
-        if timeSinceLastUpdate < updateInterval then
+        if accum < updateInterval then
             return
         end
-
-        lastUpdate = gettime()
+        accum = 0
 
         -- Fetch count here (async) and cache it, then refresh text
         notification.totalCount = LootMonitor:CountItemInBags(notification.name)
@@ -1203,15 +1201,15 @@ function LootMonitor:ScheduleIconSearch(notification)
     self.activeOnUpdateFrames = self.activeOnUpdateFrames + 1
 
     local searchFrame = CreateFrame("Frame")
-    local startTime = gettime()
+    local elapsed = 0
+    local accum = 0
     local maxSearchTime = 3.0 -- Search for up to 3 seconds
     local searchInterval = 0.2 -- Check every 0.2 seconds
-    local lastSearch = 0
     local fallbackUsed = false
 
     searchFrame:SetScript("OnUpdate", function()
-        local elapsed = gettime() - startTime
-        local timeSinceLastSearch = gettime() - lastSearch
+        elapsed = elapsed + arg1
+        accum = accum + arg1
 
         -- Stop searching after max time
         if elapsed > maxSearchTime then
@@ -1228,11 +1226,10 @@ function LootMonitor:ScheduleIconSearch(notification)
         end
 
         -- Only search at intervals
-        if timeSinceLastSearch < searchInterval then
+        if accum < searchInterval then
             return
         end
-
-        lastSearch = gettime()
+        accum = 0
 
         -- Search for item texture
         local texture = LootMonitor:FindItemTextureInBags(notification.name)
@@ -1301,25 +1298,31 @@ function LootMonitor:StartGlowAnimation(notification)
     local glowFrame = CreateFrame("Frame")
     notification.glowAnimFrame = glowFrame
 
-    local startTime = gettime()
     local glowDuration = 1.0 -- Faster pulsing
+    local updateInterval = 0.05  -- 20 FPS — pulsing is smooth, no need for 60+
+    local elapsed = 0
+    local accum = 0
 
     glowFrame:SetScript("OnUpdate", function()
-        local elapsed = gettime() - startTime
+        accum = accum + arg1
+        if accum < updateInterval then return end
+        elapsed = elapsed + accum
+        accum = 0
+
         local cycle = mathmod(elapsed, glowDuration) / glowDuration
-        
+
         -- Create a visible pulsing effect (optimized math)
         local sinValue = mathsin(cycle * MATH_2PI)
         local sinNormalized = (1 + sinValue) * 0.5  -- Normalize to 0-1 range
         local borderAlpha = 0.5 + 0.5 * sinNormalized
         local bgAlpha = 0.1 + 0.4 * sinNormalized
         local scale = GLOW_SCALE_MIN + GLOW_SCALE_VARIATION * sinNormalized
-        
+
         if notification.glow then
             -- Pulse the border and background
             notification.glow:SetBackdropBorderColor(1, 0.8, 0, borderAlpha)
             notification.glow:SetBackdropColor(1, 1, 0, bgAlpha)
-            
+
             -- Scale the glow frame (smaller scaling)
             local baseSize = 38
             local newSize = baseSize * scale
@@ -1353,75 +1356,100 @@ function LootMonitor:StartNotificationAnimation(notification)
     local displayTime = notification.isCoin and (dbDisplay * COIN_DISPLAY_FACTOR) or dbDisplay
     local fadeOutTime = notification.isCoin and (dbFadeOut * COIN_FADEOUT_FACTOR) or dbFadeOut
 
-    -- Set initial state based on animation style
-    notification.frame:SetAlpha(0)
-    notification.frame:SetScale(baseScale * 0.8)
+    -- Precompute phase boundaries once
+    local displayEnd = fadeInTime + displayTime
+    local fadeOutEnd = displayEnd + fadeOutTime
+
+    -- Track phase and last-applied values so we can:
+    --   1. Skip all SetAlpha/SetScale work during the static display phase
+    --   2. Skip redundant setter calls when the value hasn't changed
+    -- Phase: -1 = uninit, 0 = fade-in, 1 = display, 2 = fade-out
+    local currentPhase = -1
+    local lastAlpha = 0
+    local lastScale = baseScale * 0.8
+
+    -- Set initial state
+    notification.frame:SetAlpha(lastAlpha)
+    notification.frame:SetScale(lastScale)
 
     animFrame:SetScript("OnUpdate", function()
         local elapsed = GetTime() - notification.startTime
 
         if elapsed < fadeInTime then
             -- Fade in phase
+            if currentPhase ~= 0 then currentPhase = 0 end
             local progress = elapsed / fadeInTime
+            local alpha, scale
 
             if animStyle == "slide" then
-                -- Slide in from right
-                local alpha = progress
-                local scale = baseScale
-                local xOffset = 100 * (1 - progress)  -- Slide from 100 pixels right
-                notification.frame:SetAlpha(alpha)
-                notification.frame:SetScale(scale)
-                -- Note: Can't easily change frame position during animation in 1.12
-                -- So we'll just use alpha
+                alpha = progress
+                scale = baseScale
             elseif animStyle == "bounce" then
-                -- Bounce in with overshoot
-                local alpha = progress
-                local bounceProgress = progress
+                alpha = progress
+                local bounceProgress
                 if progress > 0.5 then
                     bounceProgress = 1 + (1 - progress) * 0.3  -- Overshoot
                 else
                     bounceProgress = progress * 2
                 end
-                local scale = baseScale * (0.8 + 0.2 * bounceProgress)
-                notification.frame:SetAlpha(alpha)
-                notification.frame:SetScale(scale)
+                scale = baseScale * (0.8 + 0.2 * bounceProgress)
             else  -- "fade" (default)
-                local alpha = progress
-                local scale = baseScale * (0.8 + 0.2 * progress)
-                notification.frame:SetAlpha(alpha)
-                notification.frame:SetScale(scale)
+                alpha = progress
+                scale = baseScale * (0.8 + 0.2 * progress)
             end
 
-        elseif elapsed < fadeInTime + displayTime then
-            -- Display phase
-            notification.frame:SetAlpha(1)
-            notification.frame:SetScale(baseScale)
+            if alpha ~= lastAlpha then
+                notification.frame:SetAlpha(alpha)
+                lastAlpha = alpha
+            end
+            if scale ~= lastScale then
+                notification.frame:SetScale(scale)
+                lastScale = scale
+            end
 
-        elseif elapsed < fadeInTime + displayTime + fadeOutTime then
+        elseif elapsed < displayEnd then
+            -- Display phase: set steady-state once on entry, then do nothing every frame
+            if currentPhase ~= 1 then
+                currentPhase = 1
+                if lastAlpha ~= 1 then
+                    notification.frame:SetAlpha(1)
+                    lastAlpha = 1
+                end
+                if lastScale ~= baseScale then
+                    notification.frame:SetScale(baseScale)
+                    lastScale = baseScale
+                end
+            end
+            -- No per-frame work during display phase
+
+        elseif elapsed < fadeOutEnd then
             -- Fade out phase
-            if not notification.fadingOut then
+            if currentPhase ~= 2 then
+                currentPhase = 2
                 notification.fadingOut = true
             end
 
-            local fadeProgress = (elapsed - fadeInTime - displayTime) / fadeOutTime
+            local fadeProgress = (elapsed - displayEnd) / fadeOutTime
+            local alpha, scale
 
             if animStyle == "slide" then
-                -- Slide out to left
-                local alpha = 1 - fadeProgress
-                local scale = baseScale
-                notification.frame:SetAlpha(alpha)
-                notification.frame:SetScale(scale)
+                alpha = 1 - fadeProgress
+                scale = baseScale
             elseif animStyle == "bounce" then
-                -- Bounce out
-                local alpha = 1 - fadeProgress
-                local scale = baseScale * (1 - 0.2 * fadeProgress)
-                notification.frame:SetAlpha(alpha)
-                notification.frame:SetScale(scale)
+                alpha = 1 - fadeProgress
+                scale = baseScale * (1 - 0.2 * fadeProgress)
             else  -- "fade" (default)
-                local alpha = 1 - fadeProgress
-                local scale = baseScale * (1 + 0.1 * fadeProgress)
+                alpha = 1 - fadeProgress
+                scale = baseScale * (1 + 0.1 * fadeProgress)
+            end
+
+            if alpha ~= lastAlpha then
                 notification.frame:SetAlpha(alpha)
+                lastAlpha = alpha
+            end
+            if scale ~= lastScale then
                 notification.frame:SetScale(scale)
+                lastScale = scale
             end
 
         else
