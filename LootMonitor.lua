@@ -1,6 +1,66 @@
 -- Loot Monitor for Turtle WoW
 -- Shows recent loot as fading text notifications
 
+-- Local references for better performance in Lua 5.0
+local strfind = string.find
+local strlower = string.lower
+local strsub = string.sub
+local strformat = string.format
+local strgsub = string.gsub
+local strlen = string.len
+local tinsert = table.insert
+local tremove = table.remove
+local tgetn = table.getn
+local mathsin = math.sin
+local mathpi = math.pi
+local mathmod = mod  -- Lua 5.0 uses global mod, not math.mod
+local gettime = GetTime
+local tonumber = tonumber
+local tostring = tostring
+local getglobal = getglobal
+local pairs = pairs
+local ipairs = ipairs
+local type = type
+
+-- Cache frequently used WoW API functions
+local CreateFrame = CreateFrame
+local GetTime = GetTime
+local GetContainerNumSlots = GetContainerNumSlots
+local GetContainerItemLink = GetContainerItemLink
+local GetContainerItemInfo = GetContainerItemInfo
+local UIParent = UIParent
+local DEFAULT_CHAT_FRAME = DEFAULT_CHAT_FRAME
+local WorldFrame = WorldFrame
+
+-- Cache frequently accessed constants
+local TEXTURE_PATH_QUESTION = "Interface\\Icons\\INV_Misc_QuestionMark"
+local BACKDROP_TOOLTIP_BG = "Interface\\Tooltips\\UI-Tooltip-Background"
+local BACKDROP_TOOLTIP_BORDER = "Interface\\Tooltips\\UI-Tooltip-Border"
+
+-- Cache coin icon paths
+local COIN_ICON_COPPER = "Interface\\Icons\\INV_Misc_Coin_01"
+local COIN_ICON_SILVER = "Interface\\Icons\\INV_Misc_Coin_03"
+local COIN_ICON_GOLD = "Interface\\Icons\\INV_Misc_Coin_05"
+
+-- Cache math constants and frequently used numbers
+local MATH_2PI = mathpi * 2
+local COIN_SCALE_FACTOR = 0.8
+local COIN_FADEIN_FACTOR = 0.7
+local COIN_DISPLAY_FACTOR = 0.6
+local COIN_FADEOUT_FACTOR = 0.8
+local GLOW_SCALE_MIN = 1.0
+local GLOW_SCALE_VARIATION = 0.08
+
+-- Pre-compile common patterns for better regex performance
+local QUEST_ITEM_PATTERN = "quest item"
+local QUEST_PATTERN = "quest"
+local BIND_PATTERN = "binds when picked up"
+local YOU_LOOT_PATTERN = "You loot"
+local YOU_RECEIVE_PATTERNS = {"You receive loot:", "You receive item:", "Received item"}
+local COIN_PATTERNS = {"Copper", "Silver", "Gold"}
+local BRACKET_OPEN = "%["
+local BRACKET_CLOSE = "%]"
+
 -- Initialize addon
 LootMonitor = {}
 LootMonitor.activeNotifications = {}
@@ -9,12 +69,16 @@ LootMonitor.frame = nil
 LootMonitor.moveFrame = nil
 LootMonitor.moveMode = false
 
+
+
 -- Custom print function for WoW 1.12.1 compatibility
 local function Print(msg)
     if DEFAULT_CHAT_FRAME then
         DEFAULT_CHAT_FRAME:AddMessage(msg)
     end
 end
+
+
 
 -- Create a hidden tooltip frame for scanning item tooltips
 local LootMonitorTooltip = CreateFrame("GameTooltip", "LootMonitorTooltip", nil, "GameTooltipTemplate")
@@ -33,17 +97,20 @@ function LootMonitor:IsQuestItem(itemName)
         -- Set the tooltip to the item
         LootMonitorTooltip:SetBagItem(bag, slot)
         
-        -- Scan tooltip lines for quest indicators
-        for i = 1, LootMonitorTooltip:NumLines() do
+        -- Cache tooltip line count to avoid repeated calls
+        local numLines = LootMonitorTooltip:NumLines()
+        
+        -- Scan tooltip lines for quest indicators (left side)
+        for i = 1, numLines do
             local line = getglobal("LootMonitorTooltipTextLeft" .. i)
             if line then
                 local text = line:GetText()
                 if text then
-                    local lowerText = string.lower(text)
+                    local lowerText = strlower(text)
                     -- Look for quest item indicators in tooltip
-                    if string.find(lowerText, "quest item") or 
-                       string.find(lowerText, "quest") or
-                       string.find(lowerText, "binds when picked up") then
+                    if strfind(lowerText, QUEST_ITEM_PATTERN) or 
+                       strfind(lowerText, QUEST_PATTERN) or
+                       strfind(lowerText, BIND_PATTERN) then
                         return true
                     end
                 end
@@ -51,14 +118,14 @@ function LootMonitor:IsQuestItem(itemName)
         end
         
         -- Also check right side of tooltip
-        for i = 1, LootMonitorTooltip:NumLines() do
+        for i = 1, numLines do
             local line = getglobal("LootMonitorTooltipTextRight" .. i)
             if line then
                 local text = line:GetText()
                 if text then
-                    local lowerText = string.lower(text)
-                    if string.find(lowerText, "quest item") or 
-                       string.find(lowerText, "quest") then
+                    local lowerText = strlower(text)
+                    if strfind(lowerText, QUEST_ITEM_PATTERN) or 
+                       strfind(lowerText, QUEST_PATTERN) then
                         return true
                     end
                 end
@@ -72,14 +139,14 @@ end
 -- Schedule a delayed quest item check (item needs time to appear in bags)
 function LootMonitor:ScheduleQuestItemCheck(notification)
     local checkFrame = CreateFrame("Frame")
-    local startTime = GetTime()
+    local startTime = gettime()
     local maxCheckTime = 2.0 -- Check for up to 2 seconds
     local checkInterval = 0.2 -- Check every 0.2 seconds
     local lastCheck = 0
     
     checkFrame:SetScript("OnUpdate", function()
-        local elapsed = GetTime() - startTime
-        local timeSinceLastCheck = GetTime() - lastCheck
+        local elapsed = gettime() - startTime
+        local timeSinceLastCheck = gettime() - lastCheck
         
         -- Stop checking after max time
         if elapsed > maxCheckTime then
@@ -92,7 +159,7 @@ function LootMonitor:ScheduleQuestItemCheck(notification)
             return
         end
         
-        lastCheck = GetTime()
+        lastCheck = gettime()
         
                  -- Try to detect quest item
          local isQuestItem = LootMonitor:IsQuestItem(notification.name)
@@ -113,14 +180,14 @@ end
 -- Schedule a delayed total count update (item needs time to appear in bags)
 function LootMonitor:ScheduleTotalCountUpdate(notification)
     local updateFrame = CreateFrame("Frame")
-    local startTime = GetTime()
+    local startTime = gettime()
     local maxUpdateTime = 1.5 -- Check for up to 1.5 seconds
     local updateInterval = 0.3 -- Update every 0.3 seconds
     local lastUpdate = 0
     
     updateFrame:SetScript("OnUpdate", function()
-        local elapsed = GetTime() - startTime
-        local timeSinceLastUpdate = GetTime() - lastUpdate
+        local elapsed = gettime() - startTime
+        local timeSinceLastUpdate = gettime() - lastUpdate
         
         -- Stop checking after max time
         if elapsed > maxUpdateTime then
@@ -133,7 +200,7 @@ function LootMonitor:ScheduleTotalCountUpdate(notification)
             return
         end
         
-        lastUpdate = GetTime()
+        lastUpdate = gettime()
         
         -- Update the total count display
         LootMonitor:UpdateNotificationText(notification)
@@ -165,7 +232,21 @@ function LootMonitor:OnLoad()
     -- Set defaults for missing values
     for key, value in pairs(defaults) do
         if LootMonitorDB[key] == nil then
-            LootMonitorDB[key] = value
+            if key == "position" then
+                -- Deep copy position table
+                LootMonitorDB[key] = {
+                    point = value.point,
+                    x = value.x,
+                    y = value.y
+                }
+            else
+                LootMonitorDB[key] = value
+            end
+        elseif key == "position" and LootMonitorDB[key] then
+            -- Ensure position table has all required fields
+            if not LootMonitorDB[key].point then LootMonitorDB[key].point = value.point end
+            if LootMonitorDB[key].x == nil then LootMonitorDB[key].x = value.x end
+            if LootMonitorDB[key].y == nil then LootMonitorDB[key].y = value.y end
         end
     end
     
@@ -174,14 +255,38 @@ function LootMonitor:OnLoad()
     Print("[Loot Monitor] Loaded! Fading loot notifications enabled.")
 end
 
+-- Save current frame position
+function LootMonitor:SavePosition()
+    if self.frame then
+        local point, relativeTo, relativePoint, x, y = self.frame:GetPoint()
+        if point and x and y then
+            if not LootMonitorDB.position then
+                LootMonitorDB.position = {}
+            end
+            LootMonitorDB.position.point = point
+            LootMonitorDB.position.x = x
+            LootMonitorDB.position.y = y
+        end
+    end
+end
+
 -- Create the notification container frame
 function LootMonitor:CreateNotificationFrame()
     -- Create invisible container frame for notifications
     local frame = CreateFrame("Frame", "LootMonitorNotificationFrame", UIParent)
-    frame:SetWidth(400)
+    frame:SetWidth(400) -- Compact width for notifications
     frame:SetHeight(300)
-    frame:SetPoint(LootMonitorDB.position.point, UIParent, LootMonitorDB.position.point, 
-                   LootMonitorDB.position.x, LootMonitorDB.position.y)
+    
+    -- Set position from saved settings (with fallback to defaults)
+    local point = LootMonitorDB.position.point or "CENTER"
+    local x = LootMonitorDB.position.x
+    local y = LootMonitorDB.position.y
+    
+    -- Handle the case where x or y might be 0 (which is falsy in Lua)
+    if x == nil then x = 200 end
+    if y == nil then y = 100 end
+    
+    frame:SetPoint(point, UIParent, point, x, y)
     
     -- Make it movable with Shift+Ctrl+Click (for positioning)
     frame:SetMovable(true)
@@ -200,15 +305,22 @@ function LootMonitor:RegisterEvents()
     frame:RegisterEvent("CHAT_MSG_MONEY")
     frame:RegisterEvent("CHAT_MSG_SYSTEM")
     frame:RegisterEvent("ADDON_LOADED")
+    frame:RegisterEvent("PLAYER_LOGOUT")
     frame:SetScript("OnEvent", function()
-        if event == "ADDON_LOADED" and arg1 == "LootMonitor" then
-            LootMonitor:OnLoad()
+        if event == "ADDON_LOADED" then
+            if not LootMonitor.initialized then
+                LootMonitor:OnLoad()
+                LootMonitor.initialized = true
+            end
         elseif event == "CHAT_MSG_LOOT" then
             LootMonitor:ProcessLootMessage(arg1)
         elseif event == "CHAT_MSG_MONEY" then
             LootMonitor:ProcessMoneyMessage(arg1)
         elseif event == "CHAT_MSG_SYSTEM" then
             LootMonitor:ProcessSystemMessage(arg1)
+        elseif event == "PLAYER_LOGOUT" then
+            -- Save position before logout
+            LootMonitor:SavePosition()
         end
     end)
 end
@@ -218,8 +330,8 @@ function LootMonitor:ExtractQuantityFromMessage(message, startPos)
     if not message or not startPos then return 1 end
     
     -- Look for "x" followed by numbers after the item name/link
-    local remainingText = string.sub(message, startPos)
-    local xPos = string.find(remainingText, "x")
+    local remainingText = strsub(message, startPos)
+    local xPos = strfind(remainingText, "x")
     
     if xPos then
         -- Extract the number after "x"
@@ -227,8 +339,8 @@ function LootMonitor:ExtractQuantityFromMessage(message, startPos)
         local numberEnd = numberStart
         
         -- Find the end of the number
-        while numberEnd <= string.len(remainingText) do
-            local char = string.sub(remainingText, numberEnd, numberEnd)
+        while numberEnd <= strlen(remainingText) do
+            local char = strsub(remainingText, numberEnd, numberEnd)
             if char >= "0" and char <= "9" then
                 numberEnd = numberEnd + 1
             else
@@ -237,7 +349,7 @@ function LootMonitor:ExtractQuantityFromMessage(message, startPos)
         end
         
         if numberEnd > numberStart then
-            local quantityStr = string.sub(remainingText, numberStart, numberEnd - 1)
+            local quantityStr = strsub(remainingText, numberStart, numberEnd - 1)
             local quantity = tonumber(quantityStr)
             if quantity and quantity > 0 then
                 return quantity
@@ -250,26 +362,39 @@ end
 
 -- Process loot messages and extract item information
 function LootMonitor:ProcessLootMessage(message)
-    if not message then return end
+    if not message or not LootMonitorDB.enabled then return end
     
     -- Check for coin loot messages first (e.g., "You loot 2 Copper")
-    if string.find(message, "You loot") and (string.find(message, "Copper") or string.find(message, "Silver") or string.find(message, "Gold")) then
-        self:ProcessCoinLoot(message)
-        return
+    if strfind(message, YOU_LOOT_PATTERN) then
+        -- Check if it contains coin types
+        for i = 1, tgetn(COIN_PATTERNS) do
+            if strfind(message, COIN_PATTERNS[i]) then
+                self:ProcessCoinLoot(message)
+                return
+            end
+        end
     end
     
-    -- Check if this is a "You receive loot:" or "Received item" message
-    if string.find(message, "You receive loot:") or string.find(message, "Received item") then
+    -- Check if this is a receive message using pre-compiled patterns
+    local isReceiveMessage = false
+    for i = 1, tgetn(YOU_RECEIVE_PATTERNS) do
+        if strfind(message, YOU_RECEIVE_PATTERNS[i]) then
+            isReceiveMessage = true
+            break
+        end
+    end
+    
+    if isReceiveMessage then
         -- Look for full item links (|cXXXXXXXX|Hitem:...|h[Name]|h|r)
-        local linkStart = string.find(message, "|c")
+        local linkStart = strfind(message, "|c")
         if linkStart then
-            local hStart = string.find(message, "|H", linkStart)
+            local hStart = strfind(message, "|H", linkStart)
             if hStart then
-                local linkEnd = string.find(message, "|r", hStart)
+                local linkEnd = strfind(message, "|r", hStart)
                 if linkEnd then
-                    local itemLink = string.sub(message, linkStart, linkEnd + 1)
+                    local itemLink = strsub(message, linkStart, linkEnd + 1)
                     -- Validate that it's a proper item link with |Hitem:
-                    if string.find(itemLink, "|Hitem:") then
+                    if strfind(itemLink, "|Hitem:") then
                         -- Extract quantity after the link
                         local quantity = self:ExtractQuantityFromMessage(message, linkEnd + 2)
                         self:AddLootItem(itemLink, false, quantity)
@@ -280,11 +405,11 @@ function LootMonitor:ProcessLootMessage(message)
         end
         
         -- Extract item name in brackets (this is what we're actually getting)
-        local bracketStart = string.find(message, "%[")
+        local bracketStart = strfind(message, BRACKET_OPEN)
         if bracketStart then
-            local bracketEnd = string.find(message, "%]", bracketStart)
+            local bracketEnd = strfind(message, BRACKET_CLOSE, bracketStart)
             if bracketEnd then
-                local itemName = string.sub(message, bracketStart + 1, bracketEnd - 1)
+                local itemName = strsub(message, bracketStart + 1, bracketEnd - 1)
                 -- Extract quantity after the brackets
                 local quantity = self:ExtractQuantityFromMessage(message, bracketEnd + 1)
                 self:AddLootItem(itemName, true, quantity) -- true indicates it's just a name, not a full link
@@ -302,24 +427,23 @@ function LootMonitor:ProcessCoinLoot(message)
     local coinType = ""
     
     -- Look for patterns like "You loot 2 Copper", "You loot 1 Silver", etc.
-    local amountStart = string.find(message, "You loot ")
+    local amountStart = strfind(message, YOU_LOOT_PATTERN)
     if amountStart then
-        local afterLoot = string.sub(message, amountStart + 9) -- Skip "You loot "
+        local afterLoot = strsub(message, amountStart + 9) -- Skip "You loot "
         
         -- Find the number
-        local spacePos = string.find(afterLoot, " ")
+        local spacePos = strfind(afterLoot, " ")
         if spacePos then
-            local amountStr = string.sub(afterLoot, 1, spacePos - 1)
+            local amountStr = strsub(afterLoot, 1, spacePos - 1)
             coinAmount = tonumber(amountStr) or 0
             
-            -- Find the coin type
-            local coinTypeStr = string.sub(afterLoot, spacePos + 1)
-            if string.find(coinTypeStr, "Copper") then
-                coinType = "Copper"
-            elseif string.find(coinTypeStr, "Silver") then
-                coinType = "Silver"
-            elseif string.find(coinTypeStr, "Gold") then
-                coinType = "Gold"
+            -- Find the coin type using pre-compiled patterns
+            local coinTypeStr = strsub(afterLoot, spacePos + 1)
+            for i = 1, tgetn(COIN_PATTERNS) do
+                if strfind(coinTypeStr, COIN_PATTERNS[i]) then
+                    coinType = COIN_PATTERNS[i]
+                    break
+                end
             end
         end
     end
@@ -332,7 +456,7 @@ end
 
 -- Process money loot messages from CHAT_MSG_MONEY event
 function LootMonitor:ProcessMoneyMessage(message)
-    if not message then return end
+    if not message or not LootMonitorDB.enabled then return end
     
     -- Money messages might be in different formats
     -- Common patterns might be "You loot 2 Copper" or just "2 Copper"
@@ -340,17 +464,17 @@ function LootMonitor:ProcessMoneyMessage(message)
     local coinType = ""
     
     -- Try different patterns
-    if string.find(message, "Copper") then
+    if strfind(message, "Copper") then
         coinType = "Copper"
-    elseif string.find(message, "Silver") then
+    elseif strfind(message, "Silver") then
         coinType = "Silver"  
-    elseif string.find(message, "Gold") then
+    elseif strfind(message, "Gold") then
         coinType = "Gold"
     end
     
     if coinType ~= "" then
         -- Extract the number - look for any number in the message
-        local numberMatch = string.gsub(message, ".*(%d+).*", "%1")
+        local numberMatch = strgsub(message, ".*(%d+).*", "%1")
         coinAmount = tonumber(numberMatch) or 0
         
         if coinAmount > 0 then
@@ -362,31 +486,31 @@ end
 
 -- Process system messages for quest rewards and other item gains
 function LootMonitor:ProcessSystemMessage(message)
-    if not message then return end
+    if not message or not LootMonitorDB.enabled then return end
     
     -- Debug: Print system messages that might contain item information
-    if LootMonitor.debugMode and (string.find(message, "Received item") or 
-       string.find(message, "You receive") or 
-       string.find(message, "receive") or
-       string.find(message, "%[")) then
+    if LootMonitor.debugMode and (
+       strfind(message, "You receive") or 
+       strfind(message, "%[")) then
         Print("[LootMonitor Debug] System message: " .. message)
     end
     
     -- Check for various quest reward patterns
-    if string.find(message, "Received item") or 
-       string.find(message, "You receive") or
-       string.find(message, "receive") then
+    if strfind(message, "Received item:") or
+       strfind(message, "You receive item:") or
+       strfind(message, "You receive") or
+       strfind(message, "receive") then
         
         -- Look for full item links (|cXXXXXXXX|Hitem:...|h[Name]|h|r)
-        local linkStart = string.find(message, "|c")
+        local linkStart = strfind(message, "|c")
         if linkStart then
-            local hStart = string.find(message, "|H", linkStart)
+            local hStart = strfind(message, "|H", linkStart)
             if hStart then
-                local linkEnd = string.find(message, "|r", hStart)
+                local linkEnd = strfind(message, "|r", hStart)
                 if linkEnd then
-                    local itemLink = string.sub(message, linkStart, linkEnd + 1)
+                    local itemLink = strsub(message, linkStart, linkEnd + 1)
                     -- Validate that it's a proper item link with |Hitem:
-                    if string.find(itemLink, "|Hitem:") then
+                    if strfind(itemLink, "|Hitem:") then
                         -- Extract quantity after the link
                         local quantity = self:ExtractQuantityFromMessage(message, linkEnd + 2)
                         self:AddLootItem(itemLink, false, quantity)
@@ -397,11 +521,11 @@ function LootMonitor:ProcessSystemMessage(message)
         end
         
         -- Extract item name in brackets
-        local bracketStart = string.find(message, "%[")
+        local bracketStart = strfind(message, "%[")
         if bracketStart then
-            local bracketEnd = string.find(message, "%]", bracketStart)
+            local bracketEnd = strfind(message, "%]", bracketStart)
             if bracketEnd then
-                local itemName = string.sub(message, bracketStart + 1, bracketEnd - 1)
+                local itemName = strsub(message, bracketStart + 1, bracketEnd - 1)
                 -- Extract quantity after the brackets
                 local quantity = self:ExtractQuantityFromMessage(message, bracketEnd + 1)
                 self:AddLootItem(itemName, true, quantity)
@@ -420,10 +544,10 @@ function LootMonitor:AddLootItem(itemData, isNameOnly, quantity)
     -- Extract item name
     if not isNameOnly then
         -- It's a full item link, extract name
-        local bracketStart = string.find(itemData, "%[")
-        local bracketEnd = string.find(itemData, "%]")
+        local bracketStart = strfind(itemData, BRACKET_OPEN)
+        local bracketEnd = strfind(itemData, BRACKET_CLOSE)
         if bracketStart and bracketEnd then
-            itemName = string.sub(itemData, bracketStart + 1, bracketEnd - 1)
+            itemName = strsub(itemData, bracketStart + 1, bracketEnd - 1)
         else
             itemName = "Unknown Item"
         end
@@ -432,9 +556,11 @@ function LootMonitor:AddLootItem(itemData, isNameOnly, quantity)
         itemName = itemData
     end
     
-    -- Check if we already have a notification for this item
+    -- Check if we already have a notification for this item (optimized)
     local existingNotification = nil
-    for _, notification in ipairs(self.activeNotifications) do
+    local activeList = self.activeNotifications
+    for i = 1, tgetn(activeList) do
+        local notification = activeList[i]
         if notification.name == itemName and not notification.fadingOut then
             existingNotification = notification
             break
@@ -465,10 +591,10 @@ function LootMonitor:FindItemInBags(itemName)
                 local itemLink = GetContainerItemLink(bag, slot)
                 if itemLink then
                     -- Use more efficient string matching
-                    local linkStart = string.find(itemLink, "%[")
-                    local linkEnd = string.find(itemLink, "%]")
+                    local linkStart = strfind(itemLink, BRACKET_OPEN)
+                    local linkEnd = strfind(itemLink, BRACKET_CLOSE)
                     if linkStart and linkEnd then
-                        local linkName = string.sub(itemLink, linkStart + 1, linkEnd - 1)
+                        local linkName = strsub(itemLink, linkStart + 1, linkEnd - 1)
                         if linkName == itemName then
                             local texture = GetContainerItemInfo(bag, slot)
                             if texture then
@@ -490,6 +616,20 @@ function LootMonitor:FindItemTextureInBags(itemName)
     return texture
 end
 
+-- Check if an item is a coin/money item (actual currency, not items containing these words)
+function LootMonitor:IsCoinItem(itemName)
+    if not itemName then return false end
+    local lowerName = strlower(itemName)
+    -- Only match exact coin patterns like "5 Copper", "2 Silver", "1 Gold"
+    -- Check if it starts with a number followed by space and then the coin type
+    return strfind(lowerName, "^%d+ copper$") or 
+           strfind(lowerName, "^%d+ silver$") or 
+           strfind(lowerName, "^%d+ gold$") or
+           lowerName == "copper" or 
+           lowerName == "silver" or 
+           lowerName == "gold"
+end
+
 -- Count total amount of an item in all bags
 function LootMonitor:CountItemInBags(itemName)
     if not itemName then return 0 end
@@ -504,10 +644,10 @@ function LootMonitor:CountItemInBags(itemName)
                 local itemLink = GetContainerItemLink(bag, slot)
                 if itemLink then
                     -- Extract item name from link
-                    local linkStart = string.find(itemLink, "%[")
-                    local linkEnd = string.find(itemLink, "%]")
+                    local linkStart = strfind(itemLink, BRACKET_OPEN)
+                    local linkEnd = strfind(itemLink, BRACKET_CLOSE)
                     if linkStart and linkEnd then
-                        local linkName = string.sub(itemLink, linkStart + 1, linkEnd - 1)
+                        local linkName = strsub(itemLink, linkStart + 1, linkEnd - 1)
                         if linkName == itemName then
                             local _, itemCount = GetContainerItemInfo(bag, slot)
                             if itemCount then
@@ -529,35 +669,53 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     self:CleanupNotifications()
     
     -- Limit active notifications
-    while table.getn(self.activeNotifications) >= self.maxNotifications do
-        local oldest = self.activeNotifications[table.getn(self.activeNotifications)]
+    while tgetn(self.activeNotifications) >= self.maxNotifications do
+        local oldest = self.activeNotifications[tgetn(self.activeNotifications)]
         self:RemoveNotification(oldest)
     end
     
-    -- Create notification frame
-    local notification = CreateFrame("Frame", nil, self.frame)
-    notification:SetWidth(350)
-    notification:SetHeight(40)
+    -- Check if this is a coin notification
+    local isCoin = self:IsCoinItem(itemName)
     
-    -- Position notifications vertically
-    local yOffset = table.getn(self.activeNotifications) * -35
+    -- Create notification frame with different size for coins
+    local notification = CreateFrame("Frame", nil, self.frame)
+    if isCoin then
+        notification:SetWidth(320) -- Generous width for coins with count
+        notification:SetHeight(32) -- Smaller height for coins
+    else
+        notification:SetWidth(380) -- Generous width for items with count
+        notification:SetHeight(40)
+    end
+    
+    -- Position notifications vertically (with different spacing for coins)
+    local yOffset = tgetn(self.activeNotifications) * (isCoin and -28 or -35)
     notification:SetPoint("TOP", self.frame, "TOP", 0, yOffset)
     
-    -- Create icon
+    -- Create icon with different size for coins
     local icon = notification:CreateTexture(nil, "ARTWORK")
-    icon:SetWidth(32)
-    icon:SetHeight(32)
+    if isCoin then
+        icon:SetWidth(24) -- Smaller icon for coins
+        icon:SetHeight(24)
+    else
+        icon:SetWidth(32)
+        icon:SetHeight(32)
+    end
     icon:SetPoint("LEFT", notification, "LEFT", 0, 0)
-    icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") -- Default icon
+    icon:SetTexture(TEXTURE_PATH_QUESTION) -- Default icon
     
-    -- Create glow effect for quest items (much more visible)
+    -- Create glow effect for quest items (different size for coins)
     local glow = CreateFrame("Frame", nil, notification)
-    glow:SetWidth(38)  -- Slightly bigger than icon
-    glow:SetHeight(38)
+    if isCoin then
+        glow:SetWidth(30)  -- Smaller glow for coins
+        glow:SetHeight(30)
+    else
+        glow:SetWidth(38)  -- Regular size for items
+        glow:SetHeight(38)
+    end
     glow:SetPoint("CENTER", icon, "CENTER", 0, 0)
     glow:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        bgFile = BACKDROP_TOOLTIP_BG,
+        edgeFile = BACKDROP_TOOLTIP_BORDER,
         tile = true,
         tileSize = 16,
         edgeSize = 16,
@@ -567,17 +725,19 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
     glow:SetBackdropBorderColor(1, 0.8, 0, 1) -- Bright yellow-orange border
     glow:Hide() -- Hidden by default
     
-    -- Create main text
-    local text = notification:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    -- Create main text with different styling for coins
+    local text = notification:CreateFontString(nil, "OVERLAY", isCoin and "GameFontNormal" or "GameFontNormalLarge")
     text:SetPoint("LEFT", icon, "RIGHT", 8, 0)
     text:SetJustifyH("LEFT")
+    -- Set generous max width to prevent clipping but allow natural sizing
+    text:SetWidth(isCoin and 250 or 300)
     
-    -- Create total count text (purple)
-    local totalText = notification:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    totalText:SetPoint("LEFT", text, "RIGHT", 5, 0)
-    totalText:SetPoint("RIGHT", notification, "RIGHT", -5, 0)
+    -- Create total count text (purple) - smaller for coins
+    local totalText = notification:CreateFontString(nil, "OVERLAY", isCoin and "GameFontNormalSmall" or "GameFontNormalLarge")
     totalText:SetJustifyH("LEFT")
     totalText:SetTextColor(0.8, 0.4, 1) -- Purple color
+    -- Set generous width for count text
+    totalText:SetWidth(80)
     
     -- Store notification data (we'll check for quest item status after a delay)
     local notificationData = {
@@ -590,16 +750,20 @@ function LootMonitor:CreateLootNotification(itemName, quantity, itemData, isName
         count = quantity,
         data = itemData,
         isNameOnly = isNameOnly,
+        isCoin = isCoin,
         isQuestItem = false, -- Will be set later
-        startTime = GetTime(),
+        startTime = gettime(),
         fadingOut = false
     }
     
     -- Set initial text
     self:UpdateNotificationText(notificationData)
     
+    -- Position total count text dynamically
+    self:PositionTotalCountText(notificationData)
+    
     -- Add to active notifications
-    table.insert(self.activeNotifications, 1, notificationData)
+    tinsert(self.activeNotifications, 1, notificationData)
     
     -- Schedule quest item check with a slight delay (item needs to be in bags first)
     self:ScheduleQuestItemCheck(notificationData)
@@ -636,48 +800,96 @@ function LootMonitor:UpdateNotificationText(notification)
         notification.totalText:SetText("")
     end
     
-    -- Set color based on item quality if available
-    if not notification.isNameOnly and notification.data then
-        local colorStart = string.find(notification.data, "|c")
-        if colorStart then
-            local colorCode = string.sub(notification.data, colorStart + 2, colorStart + 9)
-            if string.len(colorCode) == 8 then
-                local r = tonumber(string.sub(colorCode, 3, 4), 16) / 255
-                local g = tonumber(string.sub(colorCode, 5, 6), 16) / 255
-                local b = tonumber(string.sub(colorCode, 7, 8), 16) / 255
-                notification.text:SetTextColor(r, g, b)
+    -- Position total count text dynamically after main text
+    self:PositionTotalCountText(notification)
+    
+    -- Set color based on item type
+    if notification.isCoin then
+        -- Golden color for coins
+        notification.text:SetTextColor(1, 0.82, 0) -- Gold color
+    elseif not notification.isNameOnly and notification.data then
+        -- Use item quality color if available (cached)
+        if not notification.cachedColor then
+            local colorStart = strfind(notification.data, "|c")
+            if colorStart then
+                local colorCode = strsub(notification.data, colorStart + 2, colorStart + 9)
+                if strlen(colorCode) == 8 then
+                    local r = tonumber(strsub(colorCode, 3, 4), 16) / 255
+                    local g = tonumber(strsub(colorCode, 5, 6), 16) / 255
+                    local b = tonumber(strsub(colorCode, 7, 8), 16) / 255
+                    notification.cachedColor = {r, g, b}
+                else
+                    notification.cachedColor = {1, 1, 1}
+                end
             else
-                notification.text:SetTextColor(1, 1, 1)
+                notification.cachedColor = {1, 1, 1}
             end
-        else
-            notification.text:SetTextColor(1, 1, 1)
         end
+        local color = notification.cachedColor
+        notification.text:SetTextColor(color[1], color[2], color[3])
     else
         notification.text:SetTextColor(1, 1, 1)
     end
 end
 
--- Schedule asynchronous icon search
+-- Position total count text dynamically after the main text
+function LootMonitor:PositionTotalCountText(notification)
+    -- Get the actual width of the rendered text
+    local textWidth = notification.text:GetStringWidth()
+    
+    -- Position total count text right after the main text
+    notification.totalText:ClearAllPoints()
+    notification.totalText:SetPoint("LEFT", notification.text, "LEFT", textWidth + 5, 0)
+end
+
+
+
+-- Schedule asynchronous icon search with retry mechanism
 function LootMonitor:ScheduleIconSearch(notification)
     local searchFrame = CreateFrame("Frame")
-    local startTime = GetTime()
-    local searchDelay = 0.1
+    local startTime = gettime()
+    local maxSearchTime = 3.0 -- Search for up to 3 seconds
+    local searchInterval = 0.2 -- Check every 0.2 seconds
+    local lastSearch = 0
+    local fallbackUsed = false
     
     searchFrame:SetScript("OnUpdate", function()
-        if GetTime() - startTime >= searchDelay then
-            searchFrame:SetScript("OnUpdate", nil)
-            
-            -- Search for item texture
-            local texture = LootMonitor:FindItemTextureInBags(notification.name)
-            
-            if texture then
-                notification.icon:SetTexture(texture)
-            else
-                -- Try some common fallback icons based on item name
+        local elapsed = gettime() - startTime
+        local timeSinceLastSearch = gettime() - lastSearch
+        
+        -- Stop searching after max time
+        if elapsed > maxSearchTime then
+            -- Use fallback icon if we haven't found anything
+            if not fallbackUsed then
                 local fallbackTexture = LootMonitor:GetFallbackIcon(notification.name)
                 if fallbackTexture then
                     notification.icon:SetTexture(fallbackTexture)
                 end
+            end
+            searchFrame:SetScript("OnUpdate", nil)
+            return
+        end
+        
+        -- Only search at intervals
+        if timeSinceLastSearch < searchInterval then
+            return
+        end
+        
+        lastSearch = gettime()
+        
+        -- Search for item texture
+        local texture = LootMonitor:FindItemTextureInBags(notification.name)
+        
+        if texture then
+            notification.icon:SetTexture(texture)
+            searchFrame:SetScript("OnUpdate", nil) -- Stop searching once found
+        elseif not fallbackUsed and elapsed > 0.5 then
+            -- Use fallback icon after 0.5 seconds if still no real icon found
+            local fallbackTexture = LootMonitor:GetFallbackIcon(notification.name)
+            if fallbackTexture then
+                notification.icon:SetTexture(fallbackTexture)
+                fallbackUsed = true
+                -- Continue searching for real icon in case it appears later
             end
         end
     end)
@@ -687,36 +899,36 @@ end
 function LootMonitor:GetFallbackIcon(itemName)
     if not itemName then return nil end
     
-    local name = string.lower(itemName)
+    local name = strlower(itemName)
     
     -- Check for coins first
-    if string.find(name, "copper") then
-        return "Interface\\Icons\\INV_Misc_Coin_01"
-    elseif string.find(name, "silver") then
-        return "Interface\\Icons\\INV_Misc_Coin_03"
-    elseif string.find(name, "gold") then
-        return "Interface\\Icons\\INV_Misc_Coin_05"
+    if strfind(name, "copper") then
+        return COIN_ICON_COPPER
+    elseif strfind(name, "silver") then
+        return COIN_ICON_SILVER
+    elseif strfind(name, "gold") then
+        return COIN_ICON_GOLD
     -- Common item type patterns
-    elseif string.find(name, "potion") or string.find(name, "elixir") then
+    elseif strfind(name, "potion") or strfind(name, "elixir") then
         return "Interface\\Icons\\INV_Potion_52"
-    elseif string.find(name, "cloth") or string.find(name, "linen") then
+    elseif strfind(name, "cloth") or strfind(name, "linen") then
         return "Interface\\Icons\\INV_Fabric_Linen_01"
-    elseif string.find(name, "leather") or string.find(name, "hide") then
+    elseif strfind(name, "leather") or strfind(name, "hide") then
         return "Interface\\Icons\\INV_Misc_LeatherScrap_02"
-    elseif string.find(name, "ore") or string.find(name, "metal") then
+    elseif strfind(name, "ore") or strfind(name, "metal") then
         return "Interface\\Icons\\INV_Ore_Copper_01"
-    elseif string.find(name, "herb") or string.find(name, "flower") then
+    elseif strfind(name, "herb") or strfind(name, "flower") then
         return "Interface\\Icons\\INV_Misc_Herb_07"
-    elseif string.find(name, "gem") or string.find(name, "stone") then
+    elseif strfind(name, "gem") or strfind(name, "stone") then
         return "Interface\\Icons\\INV_Misc_Gem_01"
-    elseif string.find(name, "food") or string.find(name, "bread") or string.find(name, "meat") then
+    elseif strfind(name, "food") or strfind(name, "bread") or strfind(name, "meat") then
         return "Interface\\Icons\\INV_Misc_Food_15"
-    elseif string.find(name, "fang") or string.find(name, "tooth") or string.find(name, "claw") then
+    elseif strfind(name, "fang") or strfind(name, "tooth") or strfind(name, "claw") then
         return "Interface\\Icons\\INV_Misc_MonsterClaw_04"
-    elseif string.find(name, "remnant") or string.find(name, "essence") then
+    elseif strfind(name, "remnant") or strfind(name, "essence") then
         return "Interface\\Icons\\INV_Misc_Dust_02"
     else
-        return "Interface\\Icons\\INV_Misc_QuestionMark"
+        return TEXTURE_PATH_QUESTION
     end
 end
 
@@ -725,17 +937,19 @@ function LootMonitor:StartGlowAnimation(notification)
     local glowFrame = CreateFrame("Frame")
     notification.glowAnimFrame = glowFrame
     
-    local startTime = GetTime()
+    local startTime = gettime()
     local glowDuration = 1.0 -- Faster pulsing
     
     glowFrame:SetScript("OnUpdate", function()
-        local elapsed = GetTime() - startTime
-        local cycle = mod(elapsed, glowDuration) / glowDuration
+        local elapsed = gettime() - startTime
+        local cycle = mathmod(elapsed, glowDuration) / glowDuration
         
-        -- Create a visible pulsing effect (smaller size)
-        local borderAlpha = 0.5 + 0.5 * (1 + math.sin(cycle * 2 * math.pi)) / 2
-        local bgAlpha = 0.1 + 0.4 * (1 + math.sin(cycle * 2 * math.pi)) / 2
-        local scale = 1.0 + 0.08 * (1 + math.sin(cycle * 2 * math.pi)) / 2
+        -- Create a visible pulsing effect (optimized math)
+        local sinValue = mathsin(cycle * MATH_2PI)
+        local sinNormalized = (1 + sinValue) * 0.5  -- Normalize to 0-1 range
+        local borderAlpha = 0.5 + 0.5 * sinNormalized
+        local bgAlpha = 0.1 + 0.4 * sinNormalized
+        local scale = GLOW_SCALE_MIN + GLOW_SCALE_VARIATION * sinNormalized
         
         if notification.glow then
             -- Pulse the border and background
@@ -756,21 +970,30 @@ function LootMonitor:StartNotificationAnimation(notification)
     local animFrame = CreateFrame("Frame")
     notification.animFrame = animFrame
     
+    -- Cache settings and calculate coin-specific values once
+    local dbScale = LootMonitorDB.scale
+    local dbFadeIn = LootMonitorDB.fadeInTime
+    local dbDisplay = LootMonitorDB.displayTime
+    local dbFadeOut = LootMonitorDB.fadeOutTime
+    
+    -- Different scaling for coins (using cached factors)
+    local baseScale = notification.isCoin and (dbScale * COIN_SCALE_FACTOR) or dbScale
+    local fadeInTime = notification.isCoin and (dbFadeIn * COIN_FADEIN_FACTOR) or dbFadeIn
+    local displayTime = notification.isCoin and (dbDisplay * COIN_DISPLAY_FACTOR) or dbDisplay
+    local fadeOutTime = notification.isCoin and (dbFadeOut * COIN_FADEOUT_FACTOR) or dbFadeOut
+    
     -- Set initial alpha
     notification.frame:SetAlpha(0)
-    notification.frame:SetScale(LootMonitorDB.scale * 0.8) -- Start smaller
+    notification.frame:SetScale(baseScale * 0.8) -- Start smaller
     
     animFrame:SetScript("OnUpdate", function()
         local elapsed = GetTime() - notification.startTime
-        local fadeInTime = LootMonitorDB.fadeInTime
-        local displayTime = LootMonitorDB.displayTime
-        local fadeOutTime = LootMonitorDB.fadeOutTime
         
         if elapsed < fadeInTime then
             -- Fade in phase
             local progress = elapsed / fadeInTime
             local alpha = progress
-            local scale = LootMonitorDB.scale * (0.8 + 0.2 * progress) -- Scale from 80% to 100%
+            local scale = baseScale * (0.8 + 0.2 * progress) -- Scale from 80% to 100%
             
             notification.frame:SetAlpha(alpha)
             notification.frame:SetScale(scale)
@@ -778,7 +1001,7 @@ function LootMonitor:StartNotificationAnimation(notification)
         elseif elapsed < fadeInTime + displayTime then
             -- Display phase
             notification.frame:SetAlpha(1)
-            notification.frame:SetScale(LootMonitorDB.scale)
+            notification.frame:SetScale(baseScale)
             
         elseif elapsed < fadeInTime + displayTime + fadeOutTime then
             -- Fade out phase
@@ -788,7 +1011,7 @@ function LootMonitor:StartNotificationAnimation(notification)
             
             local fadeProgress = (elapsed - fadeInTime - displayTime) / fadeOutTime
             local alpha = 1 - fadeProgress
-            local scale = LootMonitorDB.scale * (1 + 0.1 * fadeProgress) -- Scale up slightly while fading
+            local scale = baseScale * (1 + 0.1 * fadeProgress) -- Scale up slightly while fading
             
             notification.frame:SetAlpha(alpha)
             notification.frame:SetScale(scale)
@@ -800,25 +1023,29 @@ function LootMonitor:StartNotificationAnimation(notification)
     end)
 end
 
--- Remove a notification
+-- Remove a notification (optimized)
 function LootMonitor:RemoveNotification(notification)
     if notification.animFrame then
         notification.animFrame:SetScript("OnUpdate", nil)
+        notification.animFrame = nil
     end
     
     if notification.glowAnimFrame then
         notification.glowAnimFrame:SetScript("OnUpdate", nil)
+        notification.glowAnimFrame = nil
     end
     
     if notification.frame then
         notification.frame:Hide()
         notification.frame:SetParent(nil)
+        notification.frame = nil
     end
     
-    -- Remove from active list
-    for i, activeNotification in ipairs(self.activeNotifications) do
-        if activeNotification == notification then
-            table.remove(self.activeNotifications, i)
+    -- Remove from active list (optimized removal)
+    local activeList = self.activeNotifications
+    for i = 1, tgetn(activeList) do
+        if activeList[i] == notification then
+            tremove(activeList, i)
             break
         end
     end
@@ -830,13 +1057,14 @@ end
 -- Clean up finished notifications
 function LootMonitor:CleanupNotifications()
     local toRemove = {}
+    local currentTime = GetTime()
+    local totalTime = LootMonitorDB.fadeInTime + LootMonitorDB.displayTime + LootMonitorDB.fadeOutTime
     
     for i, notification in ipairs(self.activeNotifications) do
-        local elapsed = GetTime() - notification.startTime
-        local totalTime = LootMonitorDB.fadeInTime + LootMonitorDB.displayTime + LootMonitorDB.fadeOutTime
+        local elapsed = currentTime - notification.startTime
         
         if elapsed > totalTime then
-            table.insert(toRemove, notification)
+            tinsert(toRemove, notification)
         end
     end
     
@@ -845,12 +1073,20 @@ function LootMonitor:CleanupNotifications()
     end
 end
 
--- Reposition all active notifications
+-- Reposition all active notifications (optimized)
 function LootMonitor:RepositionNotifications()
-    for i, notification in ipairs(self.activeNotifications) do
-        local yOffset = (i - 1) * -35
-        notification.frame:ClearAllPoints()
-        notification.frame:SetPoint("TOP", self.frame, "TOP", 0, yOffset)
+    local activeList = self.activeNotifications
+    local listLength = tgetn(activeList)
+    
+    for i = 1, listLength do
+        local notification = activeList[i]
+        if notification.frame then
+            -- Use different spacing for coins vs regular items
+            local spacing = notification.isCoin and -28 or -35
+            local yOffset = (i - 1) * spacing
+            notification.frame:ClearAllPoints()
+            notification.frame:SetPoint("TOP", self.frame, "TOP", 0, yOffset)
+        end
     end
 end
 
@@ -872,7 +1108,14 @@ function LootMonitor:EnterMoveMode()
         local moveFrame = CreateFrame("Frame", "LootMonitorMoveFrame", UIParent)
         moveFrame:SetWidth(250)
         moveFrame:SetHeight(150)
-        moveFrame:SetPoint("CENTER", self.frame, "CENTER", 0, 0)
+        
+        -- Position move frame at the same location as the main notification frame
+        local mainPoint, _, _, mainX, mainY = self.frame:GetPoint()
+        if mainPoint and mainX and mainY then
+            moveFrame:SetPoint(mainPoint, UIParent, mainPoint, mainX, mainY)
+        else
+            moveFrame:SetPoint("CENTER", UIParent, "CENTER", 200, 100)
+        end
         
         -- Background
         local bg = moveFrame:CreateTexture(nil, "BACKGROUND")
@@ -945,7 +1188,13 @@ function LootMonitor:ExitMoveMode()
     -- Hide and save position
     if self.moveFrame then
         local point, _, _, x, y = self.moveFrame:GetPoint()
-        if point and x and y then
+        
+        if point and x and y and x ~= 0 and y ~= 0 then
+            -- Ensure position table exists
+            if not LootMonitorDB.position then
+                LootMonitorDB.position = {}
+            end
+            
             -- Save position to settings
             LootMonitorDB.position.point = point
             LootMonitorDB.position.x = x
@@ -954,6 +1203,8 @@ function LootMonitor:ExitMoveMode()
             -- Update main frame position
             self.frame:ClearAllPoints()
             self.frame:SetPoint(point, UIParent, point, x, y)
+            
+            Print("[Loot Monitor] Position saved.")
         end
         
         self.moveFrame:Hide()
@@ -962,7 +1213,7 @@ function LootMonitor:ExitMoveMode()
     -- Clear sample notifications
     self:ClearSampleNotifications()
     
-    Print("[Loot Monitor] Position saved. Move mode disabled.")
+    Print("[Loot Monitor] Move mode disabled.")
 end
 
 -- Create sample notifications for positioning
@@ -1060,7 +1311,10 @@ function LootMonitor:CreateSettingsPanel()
     enableLabel:SetText("Enable Loot Notifications")
     enableLabel:SetTextColor(0.9, 0.9, 1)
     enableCheck:SetScript("OnClick", function()
-        LootMonitorDB.enabled = enableCheck:GetChecked()
+        -- In 1.12.1, GetChecked() returns nil when unchecked, not false
+        local checked = enableCheck:GetChecked()
+        LootMonitorDB.enabled = checked and true or false
+        LootMonitor:SaveSettings()
     end)
     
     contentY = contentY - 35
@@ -1082,7 +1336,10 @@ function LootMonitor:CreateSettingsPanel()
     questGlowLabel:SetText("Quest Item Glow Effect")
     questGlowLabel:SetTextColor(0.9, 0.9, 1)
     questGlowCheck:SetScript("OnClick", function()
-        LootMonitorDB.questItemGlow = questGlowCheck:GetChecked()
+        -- In 1.12.1, GetChecked() returns nil when unchecked, not false
+        local checked = questGlowCheck:GetChecked()
+        LootMonitorDB.questItemGlow = checked and true or false
+        LootMonitor:SaveSettings()
     end)
     
     contentY = contentY - 35
@@ -1096,7 +1353,11 @@ function LootMonitor:CreateSettingsPanel()
     totalCountLabel:SetText("Show Total Count in Bags")
     totalCountLabel:SetTextColor(0.9, 0.9, 1)
     totalCountCheck:SetScript("OnClick", function()
-        LootMonitorDB.showTotalCount = totalCountCheck:GetChecked()
+        -- In 1.12.1, GetChecked() returns nil when unchecked, not false
+        -- Convert nil to false explicitly
+        local checked = totalCountCheck:GetChecked()
+        LootMonitorDB.showTotalCount = checked and true or false
+        LootMonitor:SaveSettings()
     end)
     
     contentY = contentY - 45
@@ -1112,7 +1373,7 @@ function LootMonitor:CreateSettingsPanel()
     -- Scale slider with modern styling
     local scaleLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     scaleLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, contentY)
-    scaleLabel:SetText("Scale: " .. string.format("%.1f", LootMonitorDB.scale))
+    scaleLabel:SetText("Scale: " .. format("%.1f", LootMonitorDB.scale))
     scaleLabel:SetTextColor(0.9, 0.9, 1)
     
     local scaleSlider = CreateFrame("Slider", nil, frame, "OptionsSliderTemplate")
@@ -1124,7 +1385,8 @@ function LootMonitor:CreateSettingsPanel()
     scaleSlider:SetScript("OnValueChanged", function()
         local value = scaleSlider:GetValue()
         LootMonitorDB.scale = value
-        scaleLabel:SetText("Scale: " .. string.format("%.1f", value))
+        scaleLabel:SetText("Scale: " .. format("%.1f", value))
+        LootMonitor:SaveSettings()
     end)
     
     contentY = contentY - 65
@@ -1132,7 +1394,7 @@ function LootMonitor:CreateSettingsPanel()
     -- Fade In Time slider
     local fadeInLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     fadeInLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, contentY)
-    fadeInLabel:SetText("Fade In Time: " .. string.format("%.1f", LootMonitorDB.fadeInTime) .. "s")
+    fadeInLabel:SetText("Fade In Time: " .. format("%.1f", LootMonitorDB.fadeInTime) .. "s")
     fadeInLabel:SetTextColor(0.9, 0.9, 1)
     
     local fadeInSlider = CreateFrame("Slider", nil, frame, "OptionsSliderTemplate")
@@ -1144,7 +1406,8 @@ function LootMonitor:CreateSettingsPanel()
     fadeInSlider:SetScript("OnValueChanged", function()
         local value = fadeInSlider:GetValue()
         LootMonitorDB.fadeInTime = value
-        fadeInLabel:SetText("Fade In Time: " .. string.format("%.1f", value) .. "s")
+        fadeInLabel:SetText("Fade In Time: " .. format("%.1f", value) .. "s")
+        LootMonitor:SaveSettings()
     end)
     
     contentY = contentY - 65
@@ -1152,7 +1415,7 @@ function LootMonitor:CreateSettingsPanel()
     -- Display Time slider
     local displayLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     displayLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, contentY)
-    displayLabel:SetText("Display Time: " .. string.format("%.1f", LootMonitorDB.displayTime) .. "s")
+    displayLabel:SetText("Display Time: " .. format("%.1f", LootMonitorDB.displayTime) .. "s")
     displayLabel:SetTextColor(0.9, 0.9, 1)
     
     local displaySlider = CreateFrame("Slider", nil, frame, "OptionsSliderTemplate")
@@ -1164,7 +1427,8 @@ function LootMonitor:CreateSettingsPanel()
     displaySlider:SetScript("OnValueChanged", function()
         local value = displaySlider:GetValue()
         LootMonitorDB.displayTime = value
-        displayLabel:SetText("Display Time: " .. string.format("%.1f", value) .. "s")
+        displayLabel:SetText("Display Time: " .. format("%.1f", value) .. "s")
+        LootMonitor:SaveSettings()
     end)
     
     contentY = contentY - 65
@@ -1172,7 +1436,7 @@ function LootMonitor:CreateSettingsPanel()
     -- Fade Out Time slider
     local fadeOutLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     fadeOutLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 30, contentY)
-    fadeOutLabel:SetText("Fade Out Time: " .. string.format("%.1f", LootMonitorDB.fadeOutTime) .. "s")
+    fadeOutLabel:SetText("Fade Out Time: " .. format("%.1f", LootMonitorDB.fadeOutTime) .. "s")
     fadeOutLabel:SetTextColor(0.9, 0.9, 1)
     
     local fadeOutSlider = CreateFrame("Slider", nil, frame, "OptionsSliderTemplate")
@@ -1184,7 +1448,8 @@ function LootMonitor:CreateSettingsPanel()
     fadeOutSlider:SetScript("OnValueChanged", function()
         local value = fadeOutSlider:GetValue()
         LootMonitorDB.fadeOutTime = value
-        fadeOutLabel:SetText("Fade Out Time: " .. string.format("%.1f", value) .. "s")
+        fadeOutLabel:SetText("Fade Out Time: " .. format("%.1f", value) .. "s")
+        LootMonitor:SaveSettings()
     end)
     
     -- Button area inside the window
@@ -1195,7 +1460,7 @@ function LootMonitor:CreateSettingsPanel()
     testBtn:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 15, buttonY)
     testBtn:SetWidth(140)
     testBtn:SetHeight(35)
-    testBtn:SetText("Test")
+    testBtn:SetText("Test Notification")
     testBtn:GetFontString():SetTextColor(1, 1, 1)
     testBtn:SetScript("OnClick", function()
         LootMonitor:CreateLootNotification("Test Item", 1, "Test Item", true)
@@ -1206,7 +1471,7 @@ function LootMonitor:CreateSettingsPanel()
     moveBtn:SetPoint("BOTTOM", frame, "BOTTOM", 0, buttonY)
     moveBtn:SetWidth(140)
     moveBtn:SetHeight(35)
-    moveBtn:SetText("Move Window")
+    moveBtn:SetText("Position Window")
     moveBtn:GetFontString():SetTextColor(1, 1, 1)
     moveBtn:SetScript("OnClick", function()
         frame:Hide()
@@ -1218,7 +1483,7 @@ function LootMonitor:CreateSettingsPanel()
     resetBtn:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -15, buttonY)
     resetBtn:SetWidth(140)
     resetBtn:SetHeight(35)
-    resetBtn:SetText("Reset all")
+    resetBtn:SetText("Reset Settings")
     resetBtn:GetFontString():SetTextColor(1, 0.8, 0.8)
     resetBtn:SetScript("OnClick", function()
         -- Reset to defaults with proper deep copy for nested tables
@@ -1242,16 +1507,16 @@ function LootMonitor:CreateSettingsPanel()
         
         -- Update all sliders and labels visually
         scaleSlider:SetValue(defaults.scale)
-        scaleLabel:SetText("Scale: " .. string.format("%.1f", defaults.scale))
-        
-        fadeInSlider:SetValue(defaults.fadeInTime)
-        fadeInLabel:SetText("Fade In Time: " .. string.format("%.1f", defaults.fadeInTime) .. "s")
-        
-        displaySlider:SetValue(defaults.displayTime)
-        displayLabel:SetText("Display Time: " .. string.format("%.1f", defaults.displayTime) .. "s")
-        
-        fadeOutSlider:SetValue(defaults.fadeOutTime)
-        fadeOutLabel:SetText("Fade Out Time: " .. string.format("%.1f", defaults.fadeOutTime) .. "s")
+                 scaleLabel:SetText("Scale: " .. format("%.1f", defaults.scale))
+         
+         fadeInSlider:SetValue(defaults.fadeInTime)
+         fadeInLabel:SetText("Fade In Time: " .. format("%.1f", defaults.fadeInTime) .. "s")
+         
+         displaySlider:SetValue(defaults.displayTime)
+         displayLabel:SetText("Display Time: " .. format("%.1f", defaults.displayTime) .. "s")
+         
+         fadeOutSlider:SetValue(defaults.fadeOutTime)
+         fadeOutLabel:SetText("Fade Out Time: " .. format("%.1f", defaults.fadeOutTime) .. "s")
         
         Print("[Loot Monitor] Settings reset to defaults.")
     end)
@@ -1274,10 +1539,11 @@ end
 SLASH_LOOTMONITOR1 = "/lootmonitor"
 SLASH_LOOTMONITOR2 = "/lm"
 SlashCmdList["LOOTMONITOR"] = function(msg)
-    local cmd = string.lower(msg or "")
+    local cmd = strlower(msg or "")
     
     if cmd == "toggle" then
         LootMonitorDB.enabled = not LootMonitorDB.enabled
+        LootMonitor:SaveSettings()
         if LootMonitorDB.enabled then
             Print("[Loot Monitor] Fading loot notifications enabled.")
         else
@@ -1312,6 +1578,7 @@ SlashCmdList["LOOTMONITOR"] = function(msg)
             LootMonitor.debugMode = true
             Print("[Loot Monitor] Debug mode enabled. All system messages with items will be printed.")
         end
+
     elseif cmd == "help" then
         Print("[Loot Monitor] Commands:")
         Print("  /lootmonitor or /lm - Open settings panel")
@@ -1328,7 +1595,4 @@ SlashCmdList["LOOTMONITOR"] = function(msg)
 end
 
 -- Initialize when addon loads
-if not LootMonitor.initialized then
-    LootMonitor:RegisterEvents()
-    LootMonitor.initialized = true
-end 
+LootMonitor:RegisterEvents() 
