@@ -324,6 +324,7 @@ local defaults = {
     showTotalCount = true,
     position = {
         point = "CENTER",
+        relativePoint = "CENTER",
         x = 200,
         y = 100
     },
@@ -398,6 +399,9 @@ function LootMonitor:OnLoad()
                 if type(LootMonitorDB[key].point) ~= "string" then
                     LootMonitorDB[key].point = value.point
                 end
+                if type(LootMonitorDB[key].relativePoint) ~= "string" then
+                    LootMonitorDB[key].relativePoint = value.relativePoint
+                end
                 if type(LootMonitorDB[key].x) ~= "number" then
                     LootMonitorDB[key].x = value.x
                 end
@@ -442,12 +446,13 @@ end
 -- Save current frame position
 function LootMonitor:SavePosition()
     if self.frame then
-        local point, relativeTo, relativePoint, x, y = self.frame:GetPoint()
+        local point, _, relativePoint, x, y = self.frame:GetPoint()
         if point and x and y then
             if not LootMonitorDB.position then
                 LootMonitorDB.position = {}
             end
             LootMonitorDB.position.point = point
+            LootMonitorDB.position.relativePoint = relativePoint or point
             LootMonitorDB.position.x = x
             LootMonitorDB.position.y = y
         end
@@ -542,6 +547,7 @@ function LootMonitor:CreateNotificationFrame()
 
     -- Set position from saved settings (with fallback to defaults)
     local point = LootMonitorDB.position.point or "CENTER"
+    local relativePoint = LootMonitorDB.position.relativePoint or point
     local x = LootMonitorDB.position.x
     local y = LootMonitorDB.position.y
 
@@ -549,7 +555,7 @@ function LootMonitor:CreateNotificationFrame()
     if x == nil or x < -2000 or x > 2000 then x = 200 end
     if y == nil or y < -2000 or y > 2000 then y = 100 end
 
-    frame:SetPoint(point, UIParent, point, x, y)
+    frame:SetPoint(point, UIParent, relativePoint, x, y)
     
     -- Make it movable with Shift+Ctrl+Click (for positioning)
     frame:SetMovable(true)
@@ -1565,13 +1571,13 @@ function LootMonitor:EnterMoveMode()
         moveFrame:SetScript("OnDragStart", function() 
             moveFrame:StartMoving()
         end)
-        moveFrame:SetScript("OnDragStop", function() 
+        moveFrame:SetScript("OnDragStop", function()
             moveFrame:StopMovingOrSizing()
             -- Update the main frame position to match
-            local point, _, _, x, y = moveFrame:GetPoint()
+            local point, _, relativePoint, x, y = moveFrame:GetPoint()
             if point and x and y then
                 LootMonitor.frame:ClearAllPoints()
-                LootMonitor.frame:SetPoint(point, UIParent, point, x, y)
+                LootMonitor.frame:SetPoint(point, UIParent, relativePoint or point, x, y)
             end
         end)
         
@@ -1594,23 +1600,21 @@ function LootMonitor:ExitMoveMode()
     
     -- Hide and save position
     if self.moveFrame then
-        local point, _, _, x, y = self.moveFrame:GetPoint()
-        
-        if point and x and y and x ~= 0 and y ~= 0 then
-            -- Ensure position table exists
+        local point, _, relativePoint, x, y = self.moveFrame:GetPoint()
+
+        if point and x and y then
             if not LootMonitorDB.position then
                 LootMonitorDB.position = {}
             end
-            
-            -- Save position to settings
+
             LootMonitorDB.position.point = point
+            LootMonitorDB.position.relativePoint = relativePoint or point
             LootMonitorDB.position.x = x
             LootMonitorDB.position.y = y
-            
-            -- Update main frame position
+
             self.frame:ClearAllPoints()
-            self.frame:SetPoint(point, UIParent, point, x, y)
-            
+            self.frame:SetPoint(point, UIParent, relativePoint or point, x, y)
+
             Print("[Loot Monitor] Position saved.")
         end
         
