@@ -551,9 +551,8 @@ function LootMonitor:CreateNotificationFrame()
     local x = LootMonitorDB.position.x
     local y = LootMonitorDB.position.y
 
-    -- Security fix: Validate position coordinates to prevent off-screen positioning
-    if x == nil or x < -2000 or x > 2000 then x = 200 end
-    if y == nil or y < -2000 or y > 2000 then y = 100 end
+    if x == nil then x = 200 end
+    if y == nil then y = 100 end
 
     frame:SetPoint(point, UIParent, relativePoint, x, y)
     
